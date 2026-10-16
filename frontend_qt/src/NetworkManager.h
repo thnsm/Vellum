@@ -68,7 +68,11 @@ public:
                             const QString &apiKey = QString(), 
                             const QString &modelo = QString());
 
+    /** POST /ocr_pagina_completa (OCR preemptivo em segundo plano) */
+    void executarOcrPaginaCompleta(int pagina, const QByteArray &imagemBase64);
+
 signals:
+    void ocrPaginaCompletaResultado(int pagina, int largura, int altura, const QJsonArray &palavras, const QString &textoCompleto);
     void traducaoDiretaResultado(const QString &textoIngles, const QString &traducaoPortugues, const QString &modeloUsado = QString());
     void limparOcrResultado(const QString &textoPronto);
     void transcricaoResultado(const QString &textoTranscrito);

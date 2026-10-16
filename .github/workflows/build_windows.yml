@@ -28,7 +28,7 @@ jobs:
         shell: cmd
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r backend_python/requirements.txt
           pip install pyinstaller
 
       - name: Setup Qt
@@ -44,7 +44,7 @@ jobs:
       - name: Build Frontend C++ (Qt6 Release)
         shell: cmd
         run: |
-          cmake -B build_windows -S qt_frontend -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="%Qt6_DIR%"
+          cmake -B build_windows -S frontend_qt -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="%Qt6_DIR%"
           cmake --build build_windows --config Release --parallel
 
       - name: Setup Tools (Inno Setup & Tesseract)
@@ -65,8 +65,8 @@ jobs:
               Copy-Item -Recurse -Force "build_windows\*" "release_windows\"
           }
 
-          Copy-Item -Force "qt_frontend\resources\app_icon.ico" "release_windows\app_icon.ico"
-          Copy-Item -Force "download_models.bat" "release_windows\download_models.bat"
+          Copy-Item -Force "frontend_qt\resources\app_icon.ico" "release_windows\app_icon.ico"
+          Copy-Item -Force "instaladores_e_scripts\download_models.bat" "release_windows\download_models.bat"
 
           # 1. Empacotar Tesseract-OCR portátil em release_windows
           if (Test-Path "C:\Program Files\Tesseract-OCR") {
@@ -95,7 +95,7 @@ jobs:
       - name: Package Python Backend with PyInstaller
         shell: pwsh
         run: |
-          pyinstaller --clean --noconsole --name vellum_backend --onedir --collect-all whisper --collect-all uvicorn --distpath "temp_dist" main.py
+          pyinstaller --clean --noconsole --name vellum_backend --onedir --collect-all whisper --collect-all uvicorn --distpath "temp_dist" backend_python/main.py
           Move-Item -Force "temp_dist\vellum_backend" "release_windows\backend"
           Remove-Item -Recurse -Force "temp_dist"
 
@@ -116,7 +116,7 @@ jobs:
               throw "Inno Setup compiler (ISCC.exe) not found!"
           }
           Write-Host "Compilando com Inno Setup em: $iscc"
-          & $iscc installer_windows.iss 2>&1 | Tee-Object -Variable isccOutput
+          & $iscc instaladores_e_scripts/installer_windows.iss 2>&1 | Tee-Object -Variable isccOutput
           if ($LASTEXITCODE -ne 0) {
               $isccOutput | ForEach-Object { Write-Host $_ }
               throw "ISCC compilation failed with code $LASTEXITCODE"

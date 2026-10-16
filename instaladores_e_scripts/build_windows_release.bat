@@ -5,7 +5,7 @@ echo        Vellum - Script de Compilacao e Empacotamento para Windows
 echo ==============================================================================
 
 set SCRIPT_DIR=%~dp0
-cd /d "%SCRIPT_DIR%"
+cd /d "%SCRIPT_DIR%.."
 
 set RELEASE_DIR=release_windows
 set DIST_DIR=dist_installer
@@ -19,7 +19,7 @@ mkdir "%DIST_DIR%"
 
 echo.
 echo [2/5] Compilando Frontend C++ (Qt6)...
-cmake -B build_windows -S qt_frontend -DCMAKE_BUILD_TYPE=Release
+cmake -B build_windows -S frontend_qt -DCMAKE_BUILD_TYPE=Release
 cmake --build build_windows --config Release -j%NUMBER_OF_PROCESSORS%
 
 if not exist "build_windows\Release\Vellum.exe" (
@@ -37,8 +37,8 @@ if not exist "build_windows\Release\Vellum.exe" (
 echo.
 echo [3/5] Coletando dependencias Qt com windeployqt...
 windeployqt --no-translations --compiler-runtime "%RELEASE_DIR%\Vellum.exe"
-copy /y "qt_frontend\resources\app_icon.ico" "%RELEASE_DIR%\app_icon.ico"
-copy /y "download_models.bat" "%RELEASE_DIR%\download_models.bat"
+copy /y "frontend_qt\resources\app_icon.ico" "%RELEASE_DIR%\app_icon.ico"
+copy /y "instaladores_e_scripts\download_models.bat" "%RELEASE_DIR%\download_models.bat"
 
 REM Bundle Tesseract se existir no sistema
 if exist "C:\Program Files\Tesseract-OCR" (
@@ -48,8 +48,8 @@ if exist "C:\Program Files\Tesseract-OCR" (
 
 echo.
 echo [4/5] Empacotando Backend Python (FastAPI) com PyInstaller...
-pip install pyinstaller -r requirements.txt
-pyinstaller --clean --noconsole --name vellum_backend --onedir --collect-all whisper --collect-all uvicorn --distpath "temp_dist" main.py
+pip install pyinstaller -r backend_python\requirements.txt
+pyinstaller --clean --noconsole --name vellum_backend --onedir --collect-all whisper --collect-all uvicorn --distpath "temp_dist" backend_python\main.py
 if exist "temp_dist\vellum_backend" (
     move "temp_dist\vellum_backend" "%RELEASE_DIR%\backend"
     rmdir /s /q "temp_dist"
@@ -59,17 +59,17 @@ echo.
 echo [5/5] Gerando Instalador com Inno Setup...
 set ISCC="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if exist %ISCC% (
-    %ISCC% installer_windows.iss
+    %ISCC% instaladores_e_scripts\installer_windows.iss
     echo [SUCESSO] Instalador gerado em %DIST_DIR%\Vellum-Setup-Windows-v1.0.1.exe!
 ) else (
     where iscc >nul 2>nul
     if %errorlevel% equ 0 (
-        iscc installer_windows.iss
+        iscc instaladores_e_scripts\installer_windows.iss
         echo [SUCESSO] Instalador gerado em %DIST_DIR%\Vellum-Setup-Windows-v1.0.1.exe!
     ) else (
         echo [INFO] Inno Setup (ISCC.exe) nao encontrado.
         echo        A pasta release_windows\ contem a versao portatil completa pronta para uso!
-        echo        Para gerar o instalador executavel (.exe), instale o Inno Setup 6 e execute: iscc installer_windows.iss
+        echo        Para gerar o instalador executavel (.exe), instale o Inno Setup 6 e execute: iscc instaladores_e_scripts\installer_windows.iss
     )
 )
 

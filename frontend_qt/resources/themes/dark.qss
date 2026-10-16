@@ -1,0 +1,1158 @@
+/* ==============================================================================
+   VELLUM DESIGN SYSTEM - DARK THEME (dark.qss)
+   Paleta: Escuro Profundo (#0D1117), Painéis (#161B22), Azul Vellum (#1A62CD)
+   Tipografia: Inter, Segoe UI, San Francisco, sans-serif
+   ============================================================================== */
+
+/* ── Estilos Globais ─────────────────────────────────────────────────────── */
+* {
+    font-family: 'Segoe UI', 'San Francisco', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+QWidget {
+    color: #E6EDF3;
+    font-size: 12px;
+}
+
+QMainWindow {
+    background-color: #0D1117;
+    color: #E6EDF3;
+}
+
+/* ── Custom TitleBar (Frameless Window) ─────────────────────────────────── */
+#titleBar {
+    background-color: #161B22;
+    border-bottom: 1px solid #21262D;
+}
+
+#titleBarLogo {
+    background: transparent;
+    border: none;
+}
+
+#titleBarTitle {
+    font-weight: bold;
+    font-size: 13px;
+    color: #E6EDF3;
+    background: transparent;
+}
+
+#btnTitleMin, #btnTitleMax {
+    border: none;
+    background: transparent;
+    padding: 4px 12px;
+    font-weight: bold;
+    color: #E6EDF3;
+    font-size: 13px;
+}
+
+#btnTitleMin:hover, #btnTitleMax:hover {
+    background-color: #21262D;
+}
+
+#btnTitleClose {
+    border: none;
+    background: transparent;
+    padding: 4px 12px;
+    font-weight: bold;
+    color: #E6EDF3;
+    font-size: 13px;
+}
+
+#btnTitleClose:hover {
+    background-color: #E81123;
+    color: #FFFFFF;
+}
+
+/* ── Menu Bar & Context Menus ────────────────────────────────────────────── */
+QMenuBar {
+    background-color: #161B22;
+    color: #E6EDF3;
+    border-bottom: 1px solid #30363D;
+    font-size: 12px;
+    padding: 2px 6px;
+}
+
+QMenuBar::item {
+    padding: 5px 9px;
+    background: transparent;
+    border-radius: 4px;
+}
+
+QMenuBar::item:selected {
+    background-color: #21262D;
+    color: #FFFFFF;
+}
+
+QMenu {
+    background-color: #161B22;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 4px;
+    font-size: 12px;
+}
+
+QMenu::item {
+    padding: 6px 20px 6px 12px;
+    border-radius: 4px;
+}
+
+QMenu::item:selected {
+    background-color: #21262D;
+    color: #FFFFFF;
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: #30363D;
+    margin: 4px 0;
+}
+
+/* ── Painel Esquerdo: Leitor de PDF e Toolbar ────────────────────────────── */
+#painelEsquerdo, #viewContainer, QPdfView {
+    background-color: #0D1117;
+    border: none;
+}
+
+#barraVisualizacao {
+    background-color: #161B22;
+    border-bottom: 1px solid #30363D;
+    padding: 4px 8px;
+}
+
+#lblToolbar {
+    color: #8B949E;
+    font-size: 12px;
+}
+
+#vseparador {
+    color: #30363D;
+    max-width: 1px;
+    margin: 2px 6px;
+}
+
+#btnNav {
+    background-color: #21262D;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 11px;
+}
+
+#btnNav:hover {
+    background-color: #2A2D35;
+    color: #FFFFFF;
+    border-color: #8B949E;
+}
+
+#btnNav:pressed {
+    background-color: #161B22;
+}
+
+#btnNav:disabled {
+    background-color: #161B22;
+    color: #484F58;
+    border-color: #21262D;
+}
+
+#btnZoomReset {
+    background-color: #21262D;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+    min-width: 44px;
+}
+
+#btnZoomReset:hover {
+    background-color: #2A2D35;
+    border-color: #8B949E;
+}
+
+#btnModoVis {
+    background-color: #21262D;
+    color: #8B949E;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 11px;
+}
+
+#btnModoVis:hover {
+    background-color: #2A2D35;
+    color: #FFFFFF;
+}
+
+#btnModoVis:checked {
+    background-color: #1A62CD;
+    color: #FFFFFF;
+    border-color: #1A62CD;
+    font-weight: 600;
+}
+
+#spinPagina, QSpinBox {
+    background-color: #0D1117;
+    color: #FFFFFF;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 11px;
+    min-width: 50px;
+}
+
+#spinPagina:focus, QSpinBox:focus {
+    border: 1px solid #1A62CD;
+}
+
+/* ── QSplitter (Divisor Central sem margens) ──────────────────────────────── */
+QSplitter {
+    background-color: #0D1117;
+    border: none;
+    spacing: 0px;
+}
+
+QSplitter::handle {
+    background-color: #30363D;
+}
+
+QSplitter::handle:horizontal {
+    width: 1px;
+}
+
+QSplitter::handle:hover {
+    background-color: #1A62CD;
+}
+
+/* ── QTabWidget (Painel Direito 30% - Abas Planas e Retangulares) ────────── */
+#tabWidgetPrincipal, QTabWidget {
+    background-color: #161B22;
+    border: none;
+}
+
+QTabWidget::pane {
+    border-top: 1px solid #30363D;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    background-color: #161B22;
+    margin: 0px;
+    padding: 0px;
+}
+
+QTabBar {
+    background-color: #161B22;
+    qproperty-drawBase: 0;
+    margin: 0px;
+}
+
+QTabBar::tab {
+    background-color: #161B22;
+    color: #8B949E;
+    padding: 8px 16px;
+    margin: 0px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 0px;
+}
+
+QTabBar::tab:selected {
+    background-color: #161B22;
+    color: #FFFFFF;
+    border-bottom: 2px solid #1453A3;
+}
+
+QTabBar::tab:hover:!selected {
+    background-color: #21262D;
+    color: #E6EDF3;
+}
+
+QTabBar::close-button {
+    background-color: #21262D;
+    color: #C9D1D9;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    margin-left: 8px;
+    padding: 2px;
+}
+
+QTabBar::close-button:hover {
+    background-color: #DA3633;
+    border-color: #F85149;
+    color: #FFFFFF;
+}
+
+/* ── Labels & Títulos ────────────────────────────────────────────────────── */
+#lblSecao {
+    color: #8B949E;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* ── Botões (PushButtons) ────────────────────────────────────────────────── */
+QPushButton {
+    background-color: #21262D;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+QPushButton:hover {
+    background-color: #2A2D35;
+    border-color: #8B949E;
+    color: #FFFFFF;
+}
+
+QPushButton:pressed {
+    background-color: #161B22;
+}
+
+QPushButton:disabled {
+    background-color: #161B22;
+    color: #484F58;
+    border-color: #21262D;
+}
+
+QPushButton:checked {
+    background-color: #1453A3;
+    color: #FFFFFF;
+    border-color: #1453A3;
+}
+
+/* Botões de Ação Primária (Dark Blue Vellum Accent) */
+#primaryButton, #btnPrimario, #btnTraduzir {
+    background-color: #1453A3;
+    color: #FFFFFF;
+    border: 1px solid #1453A3;
+    border-radius: 6px;
+    font-weight: 600;
+}
+
+#primaryButton:hover, #btnPrimario:hover, #btnTraduzir:hover {
+    background-color: #1A64C5;
+    border-color: #1A64C5;
+    color: #FFFFFF;
+}
+
+#primaryButton:pressed, #btnPrimario:pressed, #btnTraduzir:pressed {
+    background-color: #0E3D7D;
+}
+
+#primaryButton:disabled, #btnPrimario:disabled, #btnTraduzir:disabled {
+    background-color: #152438;
+    color: #405872;
+    border-color: #152438;
+}
+
+#btnCaptura:checked {
+    background-color: #152438;
+    color: #70B4F8;
+    border-color: #1453A3;
+    font-weight: 600;
+}
+
+#btnGravar {
+    background-color: #9E1C40;
+    color: #FFFFFF;
+    border: 1px solid #9E1C40;
+    border-radius: 6px;
+}
+
+#btnGravar:hover {
+    background-color: #BA254F;
+    border-color: #BA254F;
+}
+
+#chkAuto {
+    color: #8B949E;
+    font-size: 11px;
+}
+
+#comboFormatoSelecao {
+    background-color: #161B22;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+#comboFormatoSelecao:hover {
+    border-color: #1A62CD;
+    background-color: #21262D;
+}
+
+/* ── Entradas de Texto, Edits & Caixas de Seleção ────────────────────────── */
+QLineEdit, QTextEdit, QTextBrowser, QPlainTextEdit {
+    background-color: #0D1117;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 6px 8px;
+    selection-background-color: #1A62CD;
+    selection-color: #FFFFFF;
+}
+
+QLineEdit:focus, QTextEdit:focus, QTextBrowser:focus, QPlainTextEdit:focus {
+    border: 1px solid #1A62CD;
+}
+
+QComboBox {
+    background-color: #21262D;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 5px 8px;
+    font-size: 11px;
+}
+
+QComboBox:focus {
+    border: 1px solid #1A62CD;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 20px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #161B22;
+    color: #E6EDF3;
+    selection-background-color: #21262D;
+    selection-color: #FFFFFF;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+}
+
+/* ── Caixas Específicas de Conteúdo ───────────────────────────────────────── */
+#txtTraducao, #txtFeedback {
+    background-color: #0D1117;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+#logBox {
+    background-color: #0D1117;
+    color: #8B949E;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 6px;
+    font-family: monospace;
+    font-size: 11px;
+}
+
+#lblStatus {
+    font-size: 11px;
+    color: #8B949E;
+    padding: 2px;
+}
+
+/* ── Barras de Progresso ─────────────────────────────────────────────────── */
+QProgressBar {
+    background-color: #0D1117;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    text-align: center;
+    color: #FFFFFF;
+    font-size: 10px;
+    font-weight: 600;
+    height: 14px;
+}
+
+QProgressBar::chunk {
+    background-color: #1A62CD;
+    border-radius: 3px;
+}
+
+/* ── ScrollBars Minimalistas ─────────────────────────────────────────────── */
+QScrollBar:vertical, QScrollBar:horizontal {
+    background: #0D1117;
+    width: 8px;
+    height: 8px;
+}
+
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+    background: #21262D;
+    border-radius: 4px;
+    min-height: 24px;
+}
+
+QScrollBar::handle:hover {
+    background: #2271E7;
+}
+
+QScrollBar::add-line, QScrollBar::sub-line {
+    background: none;
+    border: none;
+    width: 0px;
+    height: 0px;
+}
+
+/* ── Status Bar ──────────────────────────────────────────────────────────── */
+QStatusBar {
+    background-color: #161B22;
+    color: #8B949E;
+    border-top: 1px solid #30363D;
+    font-size: 11px;
+    padding: 2px 8px;
+}
+
+#lblStatusGeral {
+    color: #8B949E;
+    font-size: 11px;
+}
+
+#lblProgressoNumerico {
+    color: #1A62CD;
+    font-weight: 600;
+    font-size: 11px;
+    margin-right: 12px;
+}
+
+/* ── ToolTips ────────────────────────────────────────────────────────────── */
+QToolTip {
+    background-color: #161B22;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+}
+
+/* ── Diálogos Modais ─────────────────────────────────────────────────────── */
+QDialog {
+    background-color: #161B22;
+    color: #E6EDF3;
+}
+
+QDialog QLabel {
+    color: #E6EDF3;
+}
+
+/* ── Empty State (Boas-vindas ao Leitor) ─────────────────────────────────── */
+#emptyStateWidget {
+    background-color: #0D1117;
+}
+
+#lblTituloEmpty {
+    color: #E6EDF3;
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+#lblSubEmpty {
+    color: #8B949E;
+    font-size: 13px;
+}
+
+/* ── Top Bar & Badges ────────────────────────────────────────────────────── */
+#lblProgressoTopo {
+    color: #1A62CD;
+    font-weight: 700;
+    font-size: 11px;
+}
+
+#badgeModeloAtivo {
+    background-color: #161B22;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+/* ── Botões Secundários & Especiais ──────────────────────────────────────── */
+#btnSecundario {
+    background-color: #21262D;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+#btnSecundario:hover {
+    background-color: #2A2D35;
+    border-color: #8B949E;
+    color: #FFFFFF;
+}
+
+#btnSecundario:pressed {
+    background-color: #161B22;
+}
+
+#btnSecundario:disabled {
+    background-color: #161B22;
+    color: #484F58;
+    border-color: #21262D;
+}
+
+#btnGravar[recording="true"] {
+    background-color: #DC2626;
+    color: #FFFFFF;
+    border: 1px solid #EF4444;
+}
+
+#btnGravar[recording="true"]:hover {
+    background-color: #E53E3E;
+    border-color: #F87171;
+}
+
+/* ── Assistente IA / Chat ────────────────────────────────────────────────── */
+#comboChatIA {
+    background-color: #21262D;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 3px 8px;
+    color: #1A62CD;
+    font-size: 11px;
+    font-weight: 600;
+    min-width: 80px;
+}
+
+#comboChatIA::drop-down {
+    border: none;
+}
+
+#lblModeloAtivoChat {
+    color: #8B949E;
+    font-size: 10px;
+    font-weight: 500;
+}
+
+#chatHistorico {
+    background-color: #0D1117;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 10px;
+    color: #E6EDF3;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* ── Bloco de Notas ──────────────────────────────────────────────────────── */
+#lblArquivoNota {
+    color: #8B949E;
+    font-size: 11px;
+    font-weight: 500;
+    font-style: italic;
+}
+
+#lblStatusNota {
+    color: #8B949E;
+    font-size: 11px;
+}
+
+#comboFonteNota {
+    background-color: #21262D;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 3px 8px;
+    color: #E6EDF3;
+    font-size: 11px;
+    min-width: 110px;
+}
+
+#spinTamanhoNota {
+    background-color: #0D1117;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 3px 4px;
+    color: #E6EDF3;
+    font-size: 11px;
+    min-width: 55px;
+}
+
+#btnFormatoNota {
+    background-color: #21262D;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 0px;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+#btnFormatoNota:hover {
+    background-color: #2A2D35;
+    border-color: #8B949E;
+    color: #FFFFFF;
+}
+
+#btnFormatoNota:pressed {
+    background-color: #161B22;
+}
+
+#btnBoldNota {
+    background-color: #21262D;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 0px;
+    font-weight: 800;
+    font-size: 13px;
+}
+
+#btnBoldNota:hover {
+    background-color: #2A2D35;
+    border-color: #8B949E;
+    color: #FFFFFF;
+}
+
+#btnBoldNota:checked {
+    background-color: #1A62CD;
+    color: #FFFFFF;
+    border-color: #1A62CD;
+}
+
+#btnItalicNota {
+    background-color: #21262D;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 0px;
+    font-style: italic;
+    font-weight: 700;
+    font-size: 13px;
+    font-family: serif;
+}
+
+#btnItalicNota:hover {
+    background-color: #2A2D35;
+    border-color: #8B949E;
+    color: #FFFFFF;
+}
+
+#btnItalicNota:checked {
+    background-color: #1A62CD;
+    color: #FFFFFF;
+    border-color: #1A62CD;
+}
+
+#btnUnderlineNota {
+    background-color: #21262D;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 0px;
+    font-weight: 700;
+    font-size: 13px;
+    text-decoration: underline;
+}
+
+#btnUnderlineNota:hover {
+    background-color: #2A2D35;
+    border-color: #8B949E;
+    color: #FFFFFF;
+}
+
+#btnUnderlineNota:checked {
+    background-color: #1A62CD;
+    color: #FFFFFF;
+    border-color: #1A62CD;
+}
+
+#btnCorNota {
+    background-color: #21262D;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+#btnCorNota:hover {
+    background-color: #2A2D35;
+    border-color: #8B949E;
+    color: #FFFFFF;
+}
+
+#txtAnotacoes {
+    background-color: #0D1117;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    padding: 12px;
+    color: #E6EDF3;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+/* ── PromptInputWidget ───────────────────────────────────────────────────── */
+#lblThumbText {
+    color: #8B949E;
+    font-size: 12px;
+}
+
+#btnRemoveThumb {
+    border: none;
+    border-radius: 12px;
+    background-color: #E81123;
+    color: #FFFFFF;
+    font-weight: bold;
+}
+
+#btnRemoveThumb:hover {
+    background-color: #F1707A;
+}
+
+#btnSendPrompt {
+    background-color: #1A62CD;
+    color: #FFFFFF;
+    font-weight: 600;
+    border: 1px solid #1A62CD;
+    border-radius: 4px;
+    padding: 6px 12px;
+}
+
+#btnSendPrompt:hover {
+    background-color: #2271E7;
+    border-color: #2271E7;
+}
+
+#btnSendPrompt:pressed {
+    background-color: #1C68D0;
+}
+
+/* ── Botão Destacado de Fechar Aba Individual ───────────────────────────── */
+#btnFecharAbaItem {
+    background-color: #21262D;
+    color: #C9D1D9;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: bold;
+    min-width: 18px;
+    max-width: 18px;
+    min-height: 18px;
+    max-height: 18px;
+    padding: 0px;
+    margin-left: 8px;
+    margin-right: 2px;
+}
+
+#btnFecharAbaItem:hover {
+    background-color: #DA3633;
+    border-color: #F85149;
+    color: #FFFFFF;
+}
+
+/* ── Floating HUD (Dock de Leitura Flutuante em Tela Cheia) ──────────────── */
+#floatingHUD {
+    background-color: rgba(22, 27, 34, 0.94);
+    border: 1px solid #30363D;
+    border-radius: 23px;
+}
+
+#floatingHUD QPushButton#btnHudNav {
+    background: transparent;
+    border: none;
+    color: #E6EDF3;
+    padding: 6px 10px;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: bold;
+}
+
+#floatingHUD QPushButton#btnHudNav:hover {
+    background-color: #21262D;
+    color: #FFFFFF;
+}
+
+#floatingHUD QPushButton#btnHudSair {
+    background: #21262D;
+    border: 1px solid #30363D;
+    color: #E6EDF3;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+#floatingHUD QPushButton#btnHudSair:hover {
+    background-color: #DA3633;
+    border-color: #F85149;
+    color: #FFFFFF;
+}
+
+#floatingHUD QLabel#lblHudPagina, #floatingHUD QLabel#lblHudZoom {
+    color: #8B949E;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 0 4px;
+}
+
+/* ── Quick Lookup Popover (Janela Flutuante Versátil e Móvel) ─────────── */
+#quickLookupPopover {
+    background-color: #161B22;
+    border: 1px solid #30363D;
+    border-radius: 8px;
+}
+
+#lblPopoverHeader {
+    color: #8B949E;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+#badgePopoverModelo {
+    background-color: #064E3B;
+    color: #10B981;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 4px;
+}
+
+#btnPopoverOuvir, #btnPopoverAcao, #btnPopoverEnviar {
+    background-color: #21262D;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 4px 10px;
+}
+
+#btnPopoverOuvir:hover, #btnPopoverAcao:hover, #btnPopoverEnviar:hover {
+    background-color: #1A62CD;
+    border-color: #1A62CD;
+    color: #FFFFFF;
+}
+
+#btnPopoverGravar {
+    background-color: #9E1C40;
+    color: #FFFFFF;
+    border: 1px solid #9E1C40;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+}
+
+#btnPopoverGravar:hover {
+    background-color: #BA254F;
+    border-color: #BA254F;
+}
+
+#btnPopoverExpandir {
+    background-color: #21262D;
+    color: #388BFD;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 8px;
+}
+
+#btnPopoverExpandir:hover {
+    background-color: #1453A3;
+    border-color: #1453A3;
+    color: #FFFFFF;
+}
+
+#btnPopoverFechar {
+    background: transparent;
+    color: #8B949E;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 2px 6px;
+}
+
+#btnPopoverFechar:hover {
+    background-color: #DA3633;
+    color: #FFFFFF;
+}
+
+#popoverHeaderBar {
+    background-color: #161B22;
+    border-bottom: 1px solid #21262D;
+    border-radius: 6px 6px 0 0;
+}
+
+#lblPopoverSubtitulo {
+    color: #8B949E;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Modo Tradução */
+#txtPopoverOriginal {
+    background-color: #161B22;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    font-size: 12px;
+    padding: 6px;
+}
+
+#txtPopoverOriginal:focus {
+    border-color: #1453A3;
+}
+
+#txtPopoverTraducao {
+    background-color: #0D1117;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1.4;
+    padding: 6px;
+}
+
+#btnPopoverPrimario {
+    background-color: #1453A3;
+    color: #FFFFFF;
+    border: 1px solid #1453A3;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+}
+
+#btnPopoverPrimario:hover {
+    background-color: #1A64C5;
+    border-color: #1A64C5;
+}
+
+#btnPopoverPrimario:pressed {
+    background-color: #0E3D7D;
+}
+
+/* Modo Tradução na Barra Lateral (Texto Original Editável) */
+#txtTraducaoOriginalEn {
+    background-color: #161B22;
+    color: #E6EDF3;
+    border: 1px solid #30363D;
+    border-radius: 6px;
+    font-size: 12px;
+    line-height: 1.4;
+    padding: 8px;
+}
+
+#txtTraducaoOriginalEn:focus {
+    border-color: #1453A3;
+}
+
+/* Modo Tutor de Fala */
+#lblPopoverTutorTexto {
+    color: #E6EDF3;
+    font-size: 12px;
+    font-weight: 500;
+    background-color: #0D1117;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 6px 8px;
+}
+
+#popoverAcuraciaBar {
+    background-color: #0D1117;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+}
+
+#popoverAcuraciaBar::chunk {
+    background-color: #1453A3;
+    border-radius: 3px;
+}
+
+#lblPopoverTutorNota {
+    color: #60A5FA;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+#lblPopoverTutorFeedback {
+    color: #9CA3AF;
+    font-size: 11px;
+    line-height: 1.4;
+}
+
+/* Modo Assistente IA */
+#lblPopoverChatThumb {
+    background-color: #0D1117;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 4px;
+}
+
+#txtPopoverChat {
+    background-color: #0D1117;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    color: #E6EDF3;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+#inputPopoverChat {
+    background-color: #0D1117;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    color: #E6EDF3;
+    padding: 4px 8px;
+    font-size: 11px;
+}
+
+#inputPopoverChat:focus {
+    border-color: #1453A3;
+}
+
+/* Modo Bloco de Notas */
+#txtPopoverNotas {
+    background-color: #0D1117;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    color: #E6EDF3;
+    font-size: 12px;
+    line-height: 1.4;
+    padding: 6px;
+}
+
+#txtPopoverNotas:focus {
+    border-color: #1453A3;
+}
+
+/* Size Grip de redimensionamento no canto */
+#popoverSizeGrip {
+    width: 16px;
+    height: 16px;
+    background-color: transparent;
+}
+
+
+/* ── Indicador de Métricas de IA em Tempo Real ──────────────────────────── */
+#badgeMetricasIA {
+    background-color: #0D1117;
+    color: #388BFD;
+    border: 1px solid #30363D;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: monospace;
+}
+

@@ -6,7 +6,7 @@
 #define MyAppName "Vellum"
 #define MyAppVersion "1.0.1"
 #define MyAppPublisher "Vellum Team"
-#define MyAppURL "https://github.com/LeinadSaia/Vellum"
+#define MyAppURL "https://github.com/thnsm/Vellum"
 #define MyAppExeName "Vellum.exe"
 
 [Setup]
@@ -21,6 +21,7 @@ AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
+SourceDir=..
 OutputDir=dist_installer
 OutputBaseFilename=Vellum-Setup-Windows-v{#MyAppVersion}
 SetupIconFile=release_windows\app_icon.ico
@@ -81,7 +82,7 @@ Name: "associatepdf"; Description: "Associar o Vellum como leitor padrão para a
 ; Binário principal e DLLs coletadas pelo windeployqt
 Source: "release_windows\Vellum.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "release_windows\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "Vellum.exe"
-Source: "download_models.bat"; DestDir: "{app}"; Flags: ignoreversion
+Source: "instaladores_e_scripts\download_models.bat"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\app_icon.ico"

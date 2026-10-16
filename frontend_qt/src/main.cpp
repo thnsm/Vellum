@@ -29,7 +29,11 @@ int main(int argc, char *argv[])
 
         if (argc > 1) {
             const QString arg1 = QString::fromLocal8Bit(argv[1]);
-            if (QFile::exists(arg1) && arg1.endsWith(".pdf", Qt::CaseInsensitive)) {
+            if (arg1 == "--demo") {
+                w->abrirOuAtivarAba(0); // Tradução
+                w->abrirOuAtivarAba(1); // Tutor de Fala
+                w->abrirOuAtivarAba(2); // Assistente IA
+            } else if (QFile::exists(arg1) && arg1.endsWith(".pdf", Qt::CaseInsensitive)) {
                 w->carregarArquivoPdf(arg1);
             }
         }

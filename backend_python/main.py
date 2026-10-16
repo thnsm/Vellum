@@ -404,6 +404,54 @@ def _extrair_texto_imagem(imagem_base64: str) -> str:
     return _pre_processar_ocr_engenharia(texto)
 
 
+def _ocr_pagina_completa_sync(imagem_base64: str) -> dict:
+    """
+    Executa OCR em segundo plano na página inteira e retorna todas as palavras
+    com suas posições (bounding boxes) e o texto completo. Permite seleção instantânea no frontend.
+    """
+    image_data = base64.b64decode(imagem_base64)
+    image = Image.open(io.BytesIO(image_data))
+    gray = image.convert('L')
+    contraste = ImageOps.autocontrast(gray, cutoff=2)
+
+    config_otimizada = '--psm 6 --oem 1 --dpi 300 -c tessedit_do_invert=0'
+    lang_ocr = _idioma_ocr()
+    try:
+        data = pytesseract.image_to_data(contraste, lang=lang_ocr, config=config_otimizada, output_type=pytesseract.Output.DICT)
+    except Exception:
+        try:
+            data = pytesseract.image_to_data(contraste, lang=lang_ocr, config='--psm 3 --oem 1 --dpi 300 -c tessedit_do_invert=0', output_type=pytesseract.Output.DICT)
+        except Exception as e:
+            log.error(f"[_ocr_pagina_completa_sync] Falha no Tesseract: {e}")
+            return {"largura": image.width, "altura": image.height, "palavras": [], "texto_completo": ""}
+
+    palavras = []
+    textos = []
+    n_boxes = len(data.get('text', []))
+    for i in range(n_boxes):
+        w_text = data['text'][i].strip()
+        conf_raw = str(data['conf'][i]).strip()
+        conf = int(conf_raw) if conf_raw.lstrip('-').isdigit() else 0
+        if w_text and conf > 15:
+            palavras.append({
+                "text": w_text,
+                "x": int(data['left'][i]),
+                "y": int(data['top'][i]),
+                "w": int(data['width'][i]),
+                "h": int(data['height'][i])
+            })
+            textos.append(w_text)
+
+    texto_final = _pre_processar_ocr_engenharia(" ".join(textos))
+    log.info(f"[OCR Preemptivo] Página processada com sucesso: {len(palavras)} palavras mapeadas.")
+    return {
+        "largura": image.width,
+        "altura": image.height,
+        "palavras": palavras,
+        "texto_completo": texto_final
+    }
+
+
 # ---------------------------------------------------------------------------
 # Síntese e Reprodução de Voz (Edge TTS + Miniaudio + SoundDevice)
 # ---------------------------------------------------------------------------
@@ -837,6 +885,24 @@ class TextoSujoRequest(BaseModel):
     api_key: Optional[str] = None  # Gemini key para roteamento em nuvem
     modelo: Optional[str] = None
 
+class OcrWordBox(BaseModel):
+    text: str
+    x: int
+    y: int
+    w: int
+    h: int
+
+class OcrPaginaCompletaRequest(BaseModel):
+    pagina: int
+    imagem_base64: str
+
+class OcrPaginaCompletaResponse(BaseModel):
+    pagina: int
+    largura: int
+    altura: int
+    palavras: List[OcrWordBox]
+    texto_completo: str
+
 class TextoResponse(BaseModel):
     resultado: str
 
@@ -1000,6 +1066,29 @@ async def limpar_ocr(body: TextoSujoRequest):
         raise HTTPException(status_code=500, detail=f"Erro no OCR/IA: {exc}")
 
     return TextoResponse(resultado=resultado)
+
+
+@app.post("/ocr_pagina_completa", response_model=OcrPaginaCompletaResponse, tags=["OCR"])
+async def ocr_pagina_completa(body: OcrPaginaCompletaRequest):
+    """
+    Executa OCR silencioso em segundo plano na página inteira e retorna todas as palavras
+    com suas caixas delimitadoras (bounding boxes). Permite seleção instantânea no frontend.
+    """
+    if not body.imagem_base64:
+        raise HTTPException(status_code=422, detail="imagem_base64 é obrigatória.")
+
+    try:
+        resultado = await asyncio.to_thread(_ocr_pagina_completa_sync, body.imagem_base64)
+        return OcrPaginaCompletaResponse(
+            pagina=body.pagina,
+            largura=resultado["largura"],
+            altura=resultado["altura"],
+            palavras=resultado["palavras"],
+            texto_completo=resultado["texto_completo"]
+        )
+    except Exception as exc:
+        log.error(f"[/ocr_pagina_completa] Erro: {exc}")
+        raise HTTPException(status_code=500, detail=f"Erro no OCR da página: {exc}")
 
 
 @app.post("/iniciar_gravacao", tags=["Áudio"])

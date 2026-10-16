@@ -2,6 +2,10 @@
 #include "NetworkManager.h"
 #include "ThemeManager.h"
 #include "PromptInputWidget.h"
+#include "TitleBar.h"
+#include "FloatingHUD.h"
+#include "QuickLookupPopover.h"
+#include "SelectionOverlayWidget.h"
 
 #include <QApplication>
 #include <QFileDialog>
@@ -12,6 +16,9 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFrame>
+#include <QToolButton>
+#include <QTabBar>
+#include <QStyle>
 #include <QScrollBar>
 #include <QScreen>
 #include <QBuffer>
@@ -43,6 +50,7 @@
 #include <QColorDialog>
 #include <QTextStream>
 #include <cmath>
+#include <algorithm>
 
 #include <QTcpServer>
 
@@ -53,6 +61,7 @@
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
+    setWindowFlags(Qt::FramelessWindowHint);
     setWindowTitle("Vellum — Leitor Técnico & Tutor");
     setWindowIcon(QIcon(":/app_icon.png"));
     setMinimumSize(960, 640);
@@ -67,7 +76,6 @@ MainWindow::MainWindow(QWidget *parent)
     }
     m_net = new NetworkManager(QString("http://localhost:%1").arg(m_backendPort), this);
 
-    setupMenuBar();
     setupUi();
     m_themeManager = new ThemeManager(this);
     m_themeManager->applyTheme(ThemeManager::Theme::Dark);
@@ -79,17 +87,18 @@ MainWindow::MainWindow(QWidget *parent)
 
     // Garante tela cheia e painel fechado sempre ao abrir
     showMaximized();
-    m_painelDir->setVisible(false);
+    raise();
+    activateWindow();
+    m_tabWidget->setVisible(false);
     m_actTogglePainel->setChecked(false);
 
     m_net->verificarConexao();
 
-    // Se o backend não estiver rodando após breve intervalo, tenta auto-iniciar
-    QTimer::singleShot(1200, this, [this]() {
-        if (m_lblStatus && m_lblStatus->text().contains("offline", Qt::CaseInsensitive)) {
-            verificarEIniciarBackend();
-        }
-    });
+    // Inicia o motor diretamente junto com a interface
+    verificarEIniciarBackend();
+
+    // Registra ou atualiza o atalho do aplicativo no lançador do Linux
+    registrarLancadorLinux();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
@@ -104,9 +113,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
 // Barra de Menus Superior (Controle Central sem Poluição na Tela)
 // ═════════════════════════════════════════════════════════════════════════════
 
-void MainWindow::setupMenuBar()
+QMenuBar* MainWindow::setupMenuBar()
 {
-    auto *menuBar = this->menuBar();
+    QMenuBar *menuBar = new QMenuBar(this);
 
     // ── Menu Arquivo ──────────────────────────────────────────────────────
     auto *menuArquivo = menuBar->addMenu("&Arquivo");
@@ -187,23 +196,33 @@ void MainWindow::setupMenuBar()
 
     auto *actAbaTrad = menuPainel->addAction("Ir para Tradução");
     actAbaTrad->setShortcut(QKeySequence("Ctrl+T"));
-    connect(actAbaTrad, &QAction::triggered, this, [this]() { onMudarAbaPainel(0); });
+    actAbaTrad->setShortcutContext(Qt::ApplicationShortcut);
+    connect(actAbaTrad, &QAction::triggered, this, [this]() { executarComandoAba(0); });
+    addAction(actAbaTrad);
 
     auto *actAbaTutor = menuPainel->addAction("Ir para Tutor & Pronúncia");
     actAbaTutor->setShortcut(QKeySequence("Ctrl+U"));
-    connect(actAbaTutor, &QAction::triggered, this, [this]() { onMudarAbaPainel(1); });
+    actAbaTutor->setShortcutContext(Qt::ApplicationShortcut);
+    connect(actAbaTutor, &QAction::triggered, this, [this]() { executarComandoAba(1); });
+    addAction(actAbaTutor);
 
     auto *actAbaChat = menuPainel->addAction("Ir para Assistente IA & Dúvidas");
     actAbaChat->setShortcut(QKeySequence("Ctrl+I"));
-    connect(actAbaChat, &QAction::triggered, this, [this]() { onMudarAbaPainel(2); });
+    actAbaChat->setShortcutContext(Qt::ApplicationShortcut);
+    connect(actAbaChat, &QAction::triggered, this, [this]() { executarComandoAba(2); });
+    addAction(actAbaChat);
 
     auto *actAbaNotas = menuPainel->addAction("Ir para Bloco de Notas");
     actAbaNotas->setShortcut(QKeySequence("Ctrl+N"));
-    connect(actAbaNotas, &QAction::triggered, this, [this]() { onMudarAbaPainel(3); });
+    actAbaNotas->setShortcutContext(Qt::ApplicationShortcut);
+    connect(actAbaNotas, &QAction::triggered, this, [this]() { executarComandoAba(3); });
+    addAction(actAbaNotas);
 
     auto *actAbaConfig = menuPainel->addAction("Ir para Desempenho & Layout");
     actAbaConfig->setShortcut(QKeySequence("Ctrl+D"));
-    connect(actAbaConfig, &QAction::triggered, this, [this]() { onMudarAbaPainel(4); });
+    actAbaConfig->setShortcutContext(Qt::ApplicationShortcut);
+    connect(actAbaConfig, &QAction::triggered, this, [this]() { executarComandoAba(4); });
+    addAction(actAbaConfig);
 
     // ── Menu Layout ───────────────────────────────────────────────────────
     auto *menuLayout = menuBar->addMenu("&Layout");
@@ -240,19 +259,17 @@ void MainWindow::setupMenuBar()
     cornerLayout->setSpacing(8);
 
     m_lblProgressoTopo = new QLabel(cornerWidget);
-    m_lblProgressoTopo->setStyleSheet("color: #38bdf8; font-weight: 700; font-size: 11px;");
+    m_lblProgressoTopo->setObjectName("lblProgressoTopo");
     m_lblProgressoTopo->setVisible(false);
     cornerLayout->addWidget(m_lblProgressoTopo);
 
     m_badgeModeloAtivo = new QLabel("Tradução: —", cornerWidget);
     m_badgeModeloAtivo->setObjectName("badgeModeloAtivo");
-    m_badgeModeloAtivo->setStyleSheet(
-        "background-color: #1e2025; color: #cbd5e1; border: 1px solid #2e323b; "
-        "border-radius: 4px; padding: 2px 10px; font-size: 11px; font-weight: 600;"
-    );
     cornerLayout->addWidget(m_badgeModeloAtivo);
 
     menuBar->setCornerWidget(cornerWidget, Qt::TopRightCorner);
+
+    return menuBar;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -261,9 +278,25 @@ void MainWindow::setupMenuBar()
 
 void MainWindow::setupUi()
 {
+    QWidget *centralWidget = new QWidget(this);
+    QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
+    
+    m_titleBar = new TitleBar(this);
+    mainLayout->addWidget(m_titleBar, 0);
+
+    m_customMenuBar = setupMenuBar();
+    m_customMenuBar->setFixedHeight(32);
+    m_customMenuBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    mainLayout->addWidget(m_customMenuBar, 0);
+
     m_splitter = new QSplitter(Qt::Horizontal, this);
-    m_splitter->setHandleWidth(3);
-    setCentralWidget(m_splitter);
+    m_splitter->setHandleWidth(1);
+    m_splitter->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    mainLayout->addWidget(m_splitter, 1);
+    
+    setCentralWidget(centralWidget);
 
     // ── Painel Esquerdo: Visualizador de Documentos PDF ───────────────────
     m_painelEsq = new QWidget(this);
@@ -302,11 +335,6 @@ void MainWindow::setupUi()
 
     m_emptyStateWidget = new QWidget(viewContainer);
     m_emptyStateWidget->setObjectName("emptyStateWidget");
-    m_emptyStateWidget->setStyleSheet(
-        "QWidget#emptyStateWidget {"
-        "  background-color: #0f1115;"
-        "}"
-    );
     auto *emptyLayout = new QVBoxLayout(m_emptyStateWidget);
     emptyLayout->setAlignment(Qt::AlignCenter);
     emptyLayout->setSpacing(14);
@@ -317,12 +345,12 @@ void MainWindow::setupUi()
     emptyLayout->addWidget(lblIcone);
 
     auto *lblTitulo = new QLabel("Vellum — Leitor Técnico & Tutor", m_emptyStateWidget);
-    lblTitulo->setStyleSheet("color: #f1f5f9; font-size: 19px; font-weight: 700; letter-spacing: 0.5px;");
+    lblTitulo->setObjectName("lblTituloEmpty");
     lblTitulo->setAlignment(Qt::AlignCenter);
     emptyLayout->addWidget(lblTitulo);
 
     auto *lblSub = new QLabel("Arraste e solte um livro técnico PDF aqui ou use o menu Arquivo > Abrir (Ctrl+O)", m_emptyStateWidget);
-    lblSub->setStyleSheet("color: #94a3b8; font-size: 13px;");
+    lblSub->setObjectName("lblSubEmpty");
     lblSub->setAlignment(Qt::AlignCenter);
     emptyLayout->addWidget(lblSub);
 
@@ -343,46 +371,135 @@ void MainWindow::setupUi()
     layoutEsq->addWidget(viewContainer, 1);
 
     m_rubberBand = new QRubberBand(QRubberBand::Rectangle, m_pdfView->viewport());
+    m_overlaySelecao = new SelectionOverlayWidget(m_pdfView->viewport());
+
+    m_pdfView->viewport()->setMouseTracking(true);
+    m_pdfView2->viewport()->setMouseTracking(true);
 
     m_splitter->addWidget(m_painelEsq);
 
-    // ── Painel Direito: Abas de Tradução, Tutor e Configurações ───────────
-    m_painelDir = new QFrame(this);
-    m_painelDir->setObjectName("painelDireito");
-    auto *layoutDir = new QVBoxLayout(m_painelDir);
-    layoutDir->setContentsMargins(12, 12, 12, 12);
-    layoutDir->setSpacing(8);
+    // ── Painel Direito: QTabWidget de ferramentas sob demanda ────────────
+    m_tabTraducao = criarAbaTraducao();
+    m_tabTutor = criarAbaTutor();
+    m_tabChatIA = criarAbaChatIA();
+    m_tabAnotacoes = criarAbaAnotacoes();
+    m_tabConfiguracoes = criarAbaConfiguracoes();
 
-    m_tabWidget = new QTabWidget(m_painelDir);
+    m_tabWidget = new QTabWidget(this);
     m_tabWidget->setObjectName("tabWidgetPrincipal");
+    m_tabWidget->setDocumentMode(true);
+    m_tabWidget->setTabsClosable(true);
+    connect(m_tabWidget, &QTabWidget::tabCloseRequested, this, &MainWindow::onFecharAbaPainel);
 
-    m_tabWidget->addTab(criarAbaTraducao(), "Tradução");
-    m_tabWidget->addTab(criarAbaTutor(), "Tutor de Fala");
-    m_tabWidget->addTab(criarAbaChatIA(), "Assistente IA");
-    m_tabWidget->addTab(criarAbaAnotacoes(), "Bloco de Notas");
-    m_tabWidget->addTab(criarAbaConfiguracoes(), "Desempenho & Layout");
-
-    layoutDir->addWidget(m_tabWidget);
-
-    m_splitter->addWidget(m_painelDir);
+    m_splitter->addWidget(m_tabWidget);
 
     // Inicia fechado por padrão para tela 100% limpa
-    m_painelDir->setVisible(false);
+    m_tabWidget->setVisible(false);
 
-    m_splitter->setStretchFactor(0, 75);
-    m_splitter->setStretchFactor(1, 25);
+    m_splitter->setStretchFactor(0, 70);
+    m_splitter->setStretchFactor(1, 30);
+
+    // ── Conceito 1: Floating HUD (Dock de Leitura em Tela Cheia) ──────────
+    m_floatingHud = new FloatingHUD(this);
+    m_floatingHud->hide();
+    connect(m_floatingHud, &FloatingHUD::paginaAnteriorClicada, this, &MainWindow::onPaginaAnterior);
+    connect(m_floatingHud, &FloatingHUD::paginaProximaClicada, this, &MainWindow::onPaginaProxima);
+    connect(m_floatingHud, &FloatingHUD::zoomMenosClicado, this, [this]() {
+        if (m_pdfView) {
+            m_pdfView->setZoomFactor(std::max(0.2, m_pdfView->zoomFactor() - 0.15));
+            if (m_floatingHud) m_floatingHud->atualizarZoom(m_pdfView->zoomFactor());
+        }
+    });
+    connect(m_floatingHud, &FloatingHUD::zoomMaisClicado, this, [this]() {
+        if (m_pdfView) {
+            m_pdfView->setZoomFactor(std::min(5.0, m_pdfView->zoomFactor() + 0.15));
+            if (m_floatingHud) m_floatingHud->atualizarZoom(m_pdfView->zoomFactor());
+        }
+    });
+    connect(m_floatingHud, &FloatingHUD::sairTelaCheiaClicado, this, &MainWindow::onToggleTelaCheia);
+
+    // ── Janela Flutuante Versátil (Tradução, Tutor, Assistente IA, Bloco de Notas) ──
+    m_quickLookupPopover = new QuickLookupPopover(this);
+    m_quickLookupPopover->hide();
+
+    connect(m_quickLookupPopover, &QuickLookupPopover::solicitarRetraducao, this, [this](const QString &novoTextoEn) {
+        if (m_net && !novoTextoEn.isEmpty()) {
+            m_textoOriginalEn = novoTextoEn;
+            if (m_txtTraducaoOriginalEn) {
+                m_txtTraducaoOriginalEn->blockSignals(true);
+                m_txtTraducaoOriginalEn->setPlainText(novoTextoEn);
+                m_txtTraducaoOriginalEn->blockSignals(false);
+            }
+            m_net->traduzirDireto(novoTextoEn);
+        }
+    });
+
+    connect(m_quickLookupPopover, &QuickLookupPopover::ouvirPronunciaClicada, this, [this](const QString &texto) {
+        if (m_net && !texto.isEmpty()) {
+            m_net->falarTexto(texto, "en-US-JennyNeural", "+0%");
+        }
+    });
+
+    connect(m_quickLookupPopover, &QuickLookupPopover::gravarVozTutorClicada, this, [this](const QString &textoEsperado) {
+        if (!textoEsperado.isEmpty()) {
+            m_textoOriginalEn = textoEsperado;
+            if (m_promptTextoTutor) {
+                m_promptTextoTutor->setText(textoEsperado);
+            }
+        }
+        onGravarVozTutor();
+    });
+
+    connect(m_quickLookupPopover, &QuickLookupPopover::enviarMensagemChatClicada, this, [this](const QString &pergunta, const QString &imagemB64) {
+        if (m_net) {
+            const int tierIdx = m_comboPerfil ? m_comboPerfil->currentIndex() : 0;
+            QString apiKey = (tierIdx == 0) ? m_iaApiKey.trimmed() : QString();
+            QString modelo = (tierIdx == 0) ? m_iaModelo.trimmed() : (tierIdx == 1 ? "phi3:mini" : (tierIdx == 2 ? "llama3.2:3b" : "llama3"));
+            m_net->enviarMensagemChat(pergunta, imagemB64, m_chatHistoricoJson, m_iaProvedor, apiKey, modelo);
+        }
+    });
+
+    connect(m_quickLookupPopover, &QuickLookupPopover::salvarNotaNoPainelClicada, this, [this](const QString &texto) {
+        if (m_txtAnotacoes && !texto.isEmpty()) {
+            m_txtAnotacoes->append("\n--- Anotação Rápida ---\n" + texto);
+            appendLog("Anotação sincronizada com o Bloco de Notas principal.", "success");
+        }
+    });
+
+    connect(m_quickLookupPopover, &QuickLookupPopover::expandirNoPainelClicado, this, [this](int modoIndex, const QString &d1, const QString &d2) {
+        abrirOuAtivarAba(modoIndex);
+        if (modoIndex == 0) {
+            if (m_txtTraducaoOriginalEn && !d1.isEmpty()) {
+                m_txtTraducaoOriginalEn->blockSignals(true);
+                m_txtTraducaoOriginalEn->setPlainText(d1);
+                m_txtTraducaoOriginalEn->blockSignals(false);
+            }
+        } else if (modoIndex == 1) {
+            if (m_promptTextoTutor && !d1.isEmpty()) m_promptTextoTutor->setText(d1);
+        } else if (modoIndex == 2) {
+            if (m_promptInput && !d1.isEmpty()) m_promptInput->setText(d1);
+            if (!d2.isEmpty() && m_promptInput) m_promptInput->showImagePreview(d2, "Circuito");
+        } else if (modoIndex == 3) {
+            if (m_txtAnotacoes && !d1.isEmpty()) m_txtAnotacoes->setText(d1);
+        }
+    });
+
 
     // ── Barra de Status Inferior Minimalista ──────────────────────────────
     auto *bar = statusBar();
-    bar->setStyleSheet("QStatusBar { background-color: #16171a; border-top: 1px solid #27282d; color: #94a3b8; font-size: 11px; padding: 2px 8px; }");
 
     m_lblStatusGeral = new QLabel("Pronto", bar);
-    m_lblStatusGeral->setStyleSheet("color: #64748b; font-size: 11px;");
+    m_lblStatusGeral->setObjectName("lblStatusGeral");
     bar->addWidget(m_lblStatusGeral, 1);
 
     m_lblProgressoNumerico = new QLabel("", bar);
-    m_lblProgressoNumerico->setStyleSheet("color: #38bdf8; font-weight: 600; font-size: 11px; margin-right: 12px;");
+    m_lblProgressoNumerico->setObjectName("lblProgressoNumerico");
     bar->addPermanentWidget(m_lblProgressoNumerico);
+
+    // ── Conceito 5: Badge de Métricas de IA em Tempo Real ──────────────────
+    m_badgeMetricasIA = new QLabel("IA: Pronta", bar);
+    m_badgeMetricasIA->setObjectName("badgeMetricasIA");
+    bar->addPermanentWidget(m_badgeMetricasIA);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -404,6 +521,18 @@ QWidget* MainWindow::criarAbaTraducao()
     m_btnModoCaptura->setCheckable(true);
     layoutTop->addWidget(m_btnModoCaptura);
 
+    m_comboFormatoSelecao = new QComboBox(aba);
+    m_comboFormatoSelecao->setObjectName("comboFormatoSelecao");
+    m_comboFormatoSelecao->addItem("Retângulo", static_cast<int>(SelectionOverlayWidget::Formato::Retangular));
+    m_comboFormatoSelecao->addItem("Formato Livre", static_cast<int>(SelectionOverlayWidget::Formato::Livre));
+    m_comboFormatoSelecao->setToolTip("Formato de captura: Retângulo padrão ou Desenho Livre com o mouse");
+    connect(m_comboFormatoSelecao, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
+        if (m_overlaySelecao) {
+            m_overlaySelecao->setFormato(idx == 0 ? SelectionOverlayWidget::Formato::Retangular : SelectionOverlayWidget::Formato::Livre);
+        }
+    });
+    layoutTop->addWidget(m_comboFormatoSelecao);
+
     m_btnTraduzir = new QPushButton("Traduzir Seleção", aba);
     m_btnTraduzir->setObjectName("btnTraduzir");
     m_btnTraduzir->setEnabled(false);
@@ -416,12 +545,48 @@ QWidget* MainWindow::criarAbaTraducao()
     m_chkTraducaoAuto->setChecked(true);
     layout->addWidget(m_chkTraducaoAuto);
 
+    auto *lblOrig = new QLabel("Texto Original em Inglês (Editável)", aba);
+    lblOrig->setObjectName("lblSecao");
+    layout->addWidget(lblOrig);
+
+    m_txtTraducaoOriginalEn = new QTextEdit(aba);
+    m_txtTraducaoOriginalEn->setObjectName("txtTraducaoOriginalEn");
+    m_txtTraducaoOriginalEn->setPlaceholderText("Selecione um parágrafo no documento ou digite/edite o texto em inglês aqui...");
+    m_txtTraducaoOriginalEn->setFixedHeight(80);
+    layout->addWidget(m_txtTraducaoOriginalEn);
+
+    auto *layoutAcoesTrad = new QHBoxLayout();
+    m_btnRetraduzirTexto = new QPushButton("Traduzir Texto Modificado", aba);
+    m_btnRetraduzirTexto->setObjectName("btnTraduzir");
+    m_btnRetraduzirTexto->setCursor(Qt::PointingHandCursor);
+    layoutAcoesTrad->addWidget(m_btnRetraduzirTexto);
+    layoutAcoesTrad->addStretch();
+    layout->addLayout(layoutAcoesTrad);
+
+    m_timerDebounceTraducaoAba = new QTimer(this);
+    m_timerDebounceTraducaoAba->setSingleShot(true);
+    m_timerDebounceTraducaoAba->setInterval(700);
+
+    auto dispararRetraducaoAba = [this]() {
+        if (!m_txtTraducaoOriginalEn || !m_net) return;
+        const QString txt = m_txtTraducaoOriginalEn->toPlainText().trimmed();
+        if (!txt.isEmpty() && txt != m_textoOriginalEn) {
+            m_textoOriginalEn = txt;
+            m_net->traduzirDireto(txt);
+        }
+    };
+    connect(m_timerDebounceTraducaoAba, &QTimer::timeout, this, dispararRetraducaoAba);
+    connect(m_btnRetraduzirTexto, &QPushButton::clicked, this, dispararRetraducaoAba);
+
+    auto *lblTrad = new QLabel("Tradução Técnica (PT-BR)", aba);
+    lblTrad->setObjectName("lblSecao");
+    layout->addWidget(lblTrad);
+
     m_promptTraducao = new PromptInputWidget(aba);
     m_promptTraducao->setToolbarVisible(false);
     m_promptTraducao->setReadOnly(true);
     m_promptTraducao->setObjectName("promptTraducao");
-    
-    m_promptTraducao->setPlaceholderText("Selecione um parágrafo no documento para visualizar o texto original e a tradução técnica.");
+    m_promptTraducao->setPlaceholderText("A tradução técnica em português aparecerá aqui...");
     layout->addWidget(m_promptTraducao, 1);
 
     auto *layoutBottom = new QHBoxLayout();
@@ -565,24 +730,11 @@ QWidget* MainWindow::criarAbaChatIA()
     m_comboChatIA->setToolTip("Selecionar IA para responder");
     m_comboChatIA->addItem("Gemini",  "gemini");
     m_comboChatIA->addItem("Ollama",  "ollama");
-    m_comboChatIA->setStyleSheet(
-        "QComboBox#comboChatIA {"
-        "  background-color: #1c1e24; border: 1px solid #334155;"
-        "  border-radius: 5px; padding: 3px 8px; color: #60a5fa;"
-        "  font-size: 11px; font-weight: 600; min-width: 80px;"
-        "}"
-        "QComboBox#comboChatIA::drop-down { border: none; }"
-        "QComboBox#comboChatIA::down-arrow { image: none; width: 0; }"
-        "QComboBox#comboChatIA QAbstractItemView {"
-        "  background-color: #1c1e24; border: 1px solid #334155;"
-        "  color: #e2e8f0; selection-background-color: #2563eb;"
-        "}"
-    );
     layoutHeader->addWidget(m_comboChatIA);
 
     // Label mostra o modelo do provedor selecionado (atualizado depois no carregarConfiguracoes)
     m_lblModeloAtivoChat = new QLabel(QStringLiteral("—"), aba);
-    m_lblModeloAtivoChat->setStyleSheet("color: #64748b; font-size: 10px; font-weight: 500;");
+    m_lblModeloAtivoChat->setObjectName("lblModeloAtivoChat");
     layoutHeader->addWidget(m_lblModeloAtivoChat, 1);
 
     m_btnConfigurarIA = new QPushButton("Configurar API", aba);
@@ -601,17 +753,6 @@ QWidget* MainWindow::criarAbaChatIA()
     m_chatHistorico = new QTextBrowser(aba);
     m_chatHistorico->setObjectName("chatHistorico");
     m_chatHistorico->setOpenExternalLinks(true);
-    m_chatHistorico->setStyleSheet(
-        "QTextBrowser#chatHistorico {"
-        "  background-color: #12141a;"
-        "  border: 1px solid #282c37;"
-        "  border-radius: 8px;"
-        "  padding: 10px;"
-        "  color: #e2e8f0;"
-        "  font-size: 13px;"
-        "  line-height: 1.5;"
-        "}"
-    );
     m_chatHistorico->setHtml(
         "<div style='color: #94a3b8; font-size: 13px; line-height: 1.5;'>"
         "<b style='color: #60a5fa;'>Assistente Tecnico</b><br>"
@@ -668,7 +809,7 @@ QWidget* MainWindow::criarAbaAnotacoes()
     layoutAcoes->addStretch();
 
     m_lblArquivoNota = new QLabel("Novo Documento", aba);
-    m_lblArquivoNota->setStyleSheet("color: #64748b; font-size: 11px; font-weight: 500; font-style: italic;");
+    m_lblArquivoNota->setObjectName("lblArquivoNota");
     layoutAcoes->addWidget(m_lblArquivoNota);
 
     layout->addLayout(layoutAcoes);
@@ -680,15 +821,6 @@ QWidget* MainWindow::criarAbaAnotacoes()
     // Fonte
     m_comboFonteNota = new QComboBox(aba);
     m_comboFonteNota->setObjectName("comboFonteNota");
-    m_comboFonteNota->setStyleSheet(
-        "QComboBox#comboFonteNota {"
-        "  background-color: #1a1c22; border: 1px solid #2d313b; border-radius: 5px;"
-        "  padding: 3px 8px; color: #f1f5f9; font-size: 11px; min-width: 110px;"
-        "}"
-        "QComboBox#comboFonteNota QAbstractItemView {"
-        "  background-color: #1a1c22; border: 1px solid #334155; color: #f1f5f9; selection-background-color: #2563eb;"
-        "}"
-    );
     m_comboFonteNota->addItem("Segoe UI", "Segoe UI");
     m_comboFonteNota->addItem("Arial", "Arial");
     m_comboFonteNota->addItem("Roboto", "Roboto");
@@ -699,85 +831,56 @@ QWidget* MainWindow::criarAbaAnotacoes()
 
     // Tamanho da fonte
     m_spinTamanhoNota = new QSpinBox(aba);
+    m_spinTamanhoNota->setObjectName("spinTamanhoNota");
     m_spinTamanhoNota->setRange(9, 36);
     m_spinTamanhoNota->setValue(13);
     m_spinTamanhoNota->setSuffix(" pt");
-    m_spinTamanhoNota->setStyleSheet(
-        "QSpinBox {"
-        "  background-color: #1a1c22; border: 1px solid #2d313b; border-radius: 5px;"
-        "  padding: 3px 4px; color: #f1f5f9; font-size: 11px; min-width: 55px;"
-        "}"
-    );
     layoutFormatacao->addWidget(m_spinTamanhoNota);
 
     m_btnFonteMenosNota = new QPushButton("-", aba);
+    m_btnFonteMenosNota->setObjectName("btnFormatoNota");
     m_btnFonteMenosNota->setFixedSize(28, 26);
     m_btnFonteMenosNota->setToolTip("Diminuir tamanho da fonte (-)");
-    m_btnFonteMenosNota->setStyleSheet(
-        "QPushButton { background-color: #202227; color: #f1f5f9; border: 1px solid #2d3038; border-radius: 4px; padding: 0px; font-size: 14px; font-weight: bold; }"
-        "QPushButton:hover { background-color: #292c33; border-color: #3f434d; color: #ffffff; }"
-        "QPushButton:pressed { background-color: #1b1c20; }"
-    );
     layoutFormatacao->addWidget(m_btnFonteMenosNota);
 
     m_btnFonteMaisNota = new QPushButton("+", aba);
+    m_btnFonteMaisNota->setObjectName("btnFormatoNota");
     m_btnFonteMaisNota->setFixedSize(28, 26);
     m_btnFonteMaisNota->setToolTip("Aumentar tamanho da fonte (+)");
-    m_btnFonteMaisNota->setStyleSheet(
-        "QPushButton { background-color: #202227; color: #f1f5f9; border: 1px solid #2d3038; border-radius: 4px; padding: 0px; font-size: 14px; font-weight: bold; }"
-        "QPushButton:hover { background-color: #292c33; border-color: #3f434d; color: #ffffff; }"
-        "QPushButton:pressed { background-color: #1b1c20; }"
-    );
     layoutFormatacao->addWidget(m_btnFonteMaisNota);
 
     // Separador vertical
     auto *sep = new QFrame(aba);
     sep->setFrameShape(QFrame::VLine);
-    sep->setStyleSheet("color: #2d313b;");
     layoutFormatacao->addWidget(sep);
 
     // Estilos N (Negrito), I (Itálico), S (Sublinhado)
     m_btnBoldNota = new QPushButton("N", aba);
+    m_btnBoldNota->setObjectName("btnBoldNota");
     m_btnBoldNota->setCheckable(true);
     m_btnBoldNota->setFixedSize(28, 26);
     m_btnBoldNota->setToolTip("Negrito (N)");
-    m_btnBoldNota->setStyleSheet(
-        "QPushButton { background-color: #202227; color: #f1f5f9; border: 1px solid #2d3038; border-radius: 4px; padding: 0px; font-weight: 800; font-size: 13px; }"
-        "QPushButton:hover { background-color: #292c33; border-color: #3f434d; color: #ffffff; }"
-        "QPushButton:checked { background-color: #2563eb; color: #ffffff; border-color: #3b82f6; }"
-    );
     layoutFormatacao->addWidget(m_btnBoldNota);
 
     m_btnItalicNota = new QPushButton("I", aba);
+    m_btnItalicNota->setObjectName("btnItalicNota");
     m_btnItalicNota->setCheckable(true);
     m_btnItalicNota->setFixedSize(28, 26);
     m_btnItalicNota->setToolTip("Itálico (I)");
-    m_btnItalicNota->setStyleSheet(
-        "QPushButton { background-color: #202227; color: #f1f5f9; border: 1px solid #2d3038; border-radius: 4px; padding: 0px; font-style: italic; font-weight: 700; font-size: 13px; font-family: serif; }"
-        "QPushButton:hover { background-color: #292c33; border-color: #3f434d; color: #ffffff; }"
-        "QPushButton:checked { background-color: #2563eb; color: #ffffff; border-color: #3b82f6; }"
-    );
     layoutFormatacao->addWidget(m_btnItalicNota);
 
     m_btnUnderlineNota = new QPushButton("S", aba);
+    m_btnUnderlineNota->setObjectName("btnUnderlineNota");
     m_btnUnderlineNota->setCheckable(true);
     m_btnUnderlineNota->setFixedSize(28, 26);
     m_btnUnderlineNota->setToolTip("Sublinhado (S)");
-    m_btnUnderlineNota->setStyleSheet(
-        "QPushButton { background-color: #202227; color: #f1f5f9; border: 1px solid #2d3038; border-radius: 4px; padding: 0px; font-weight: 700; font-size: 13px; text-decoration: underline; }"
-        "QPushButton:hover { background-color: #292c33; border-color: #3f434d; color: #ffffff; }"
-        "QPushButton:checked { background-color: #2563eb; color: #ffffff; border-color: #3b82f6; }"
-    );
     layoutFormatacao->addWidget(m_btnUnderlineNota);
 
     // Cor
     m_btnCorNota = new QPushButton("Cor...", aba);
+    m_btnCorNota->setObjectName("btnCorNota");
     m_btnCorNota->setFixedHeight(26);
     m_btnCorNota->setToolTip("Alterar cor do texto");
-    m_btnCorNota->setStyleSheet(
-        "QPushButton { background-color: #202227; color: #f1f5f9; border: 1px solid #2d3038; border-radius: 4px; padding: 3px 10px; font-size: 11px; font-weight: 500; }"
-        "QPushButton:hover { background-color: #292c33; border-color: #3f434d; color: #ffffff; }"
-    );
     layoutFormatacao->addWidget(m_btnCorNota);
 
     layoutFormatacao->addStretch();
@@ -787,28 +890,12 @@ QWidget* MainWindow::criarAbaAnotacoes()
     m_txtAnotacoes = new QTextEdit(aba);
     m_txtAnotacoes->setObjectName("txtAnotacoes");
     m_txtAnotacoes->setPlaceholderText("Escreva aqui suas anotações de estudo, resumos e fórmulas do livro...\n\nVocê pode salvar em disco a qualquer momento para retomar seus estudos mais tarde.");
-    m_txtAnotacoes->setStyleSheet(
-        "QTextEdit#txtAnotacoes {"
-        "  background-color: #12141a;"
-        "  border: 1px solid #282c37;"
-        "  border-radius: 8px;"
-        "  padding: 12px;"
-        "  color: #e2e8f0;"
-        "  font-size: 13px;"
-        "  font-family: 'Segoe UI', 'Arial', sans-serif;"
-        "  line-height: 1.6;"
-        "  selection-background-color: #2563eb;"
-        "}"
-        "QTextEdit#txtAnotacoes:focus {"
-        "  border: 1px solid #3b82f6;"
-        "}"
-    );
     layout->addWidget(m_txtAnotacoes, 1);
 
     // Rodapé de Status
     auto *layoutStatus = new QHBoxLayout();
     m_lblStatusNota = new QLabel("0 palavras | 0 caracteres", aba);
-    m_lblStatusNota->setStyleSheet("color: #64748b; font-size: 11px;");
+    m_lblStatusNota->setObjectName("lblStatusNota");
     layoutStatus->addWidget(m_lblStatusNota);
     layoutStatus->addStretch();
 
@@ -1103,6 +1190,7 @@ void MainWindow::connectSignals()
     connect(m_net, &NetworkManager::falaIniciada,                 this, &MainWindow::onFalaIniciada);
     connect(m_net, &NetworkManager::avaliacaoPronunciaResultado,  this, &MainWindow::onAvaliacaoPronunciaResultado);
     connect(m_net, &NetworkManager::chatRespostaResultado,        this, &MainWindow::onChatRespostaResultado);
+    connect(m_net, &NetworkManager::ocrPaginaCompletaResultado,   this, &MainWindow::onOcrPaginaCompletaResultado);
 
     // Assistente IA & Chat
     connect(m_btnConfigurarIA,     &QPushButton::clicked, this, &MainWindow::onConfigurarIA);
@@ -1241,7 +1329,7 @@ void MainWindow::carregarConfiguracoes()
     }
 
     const bool painelVisivel = settings.value("painelVisivel", false).toBool();
-    m_painelDir->setVisible(painelVisivel);
+    m_tabWidget->setVisible(painelVisivel);
     m_actTogglePainel->setChecked(painelVisivel);
 
     const int abaIndex = settings.value("abaAtual", 0).toInt();
@@ -1310,7 +1398,7 @@ void MainWindow::salvarConfiguracoes()
     QSettings settings("Vellum", "LeitorTecnico");
     settings.setValue("geometry", saveGeometry());
     settings.setValue("splitter", m_splitter->saveState());
-    settings.setValue("painelVisivel", m_painelDir->isVisible());
+    settings.setValue("painelVisivel", m_tabWidget->isVisible());
     settings.setValue("abaAtual", m_tabWidget->currentIndex());
     settings.setValue("vozIndex", m_comboVoz->currentIndex());
     settings.setValue("velIndex", m_comboVelocidade->currentIndex());
@@ -1334,14 +1422,12 @@ void MainWindow::onRestaurarLayoutPadrao()
     const int pagSalva = m_paginaAtual;
     m_bloquearSyncPagina = true;
 
-    m_painelDir->setVisible(true);
-    m_actTogglePainel->setChecked(true);
-    m_tabWidget->setCurrentIndex(0);
+    abrirOuAtivarAba(0);
 
     const int totalWidth = width();
-    m_splitter->setSizes({int(totalWidth * 0.72), int(totalWidth * 0.28)});
+    m_splitter->setSizes({int(totalWidth * 0.70), int(totalWidth * 0.30)});
     salvarConfiguracoes();
-    appendLog("Layout restaurado para o padrão ideal.", "info");
+    appendLog("Layout restaurado para o padrão ideal (70% leitor, 30% ferramentas).", "info");
 
     QTimer::singleShot(80, this, [this, pagSalva]() {
         if (m_pdfDoc && m_pdfDoc->pageCount() > 0) {
@@ -1359,11 +1445,11 @@ void MainWindow::onAplicarProporcao(int leitorPercent)
     m_bloquearSyncPagina = true;
 
     if (leitorPercent >= 100) {
-        m_painelDir->setVisible(false);
+        m_tabWidget->setVisible(false);
         m_actTogglePainel->setChecked(false);
         appendLog("Modo foco total: leitor em 100% da janela.", "info");
     } else {
-        m_painelDir->setVisible(true);
+        m_tabWidget->setVisible(true);
         m_actTogglePainel->setChecked(true);
         const int totalWidth = width();
         const int wLeitor = int(totalWidth * (leitorPercent / 100.0));
@@ -1386,12 +1472,17 @@ void MainWindow::onTogglePainelLateral(bool visivel)
     const int pagSalva = m_paginaAtual;
     m_bloquearSyncPagina = true;
 
-    m_painelDir->setVisible(visivel);
+    if (visivel && m_tabWidget->count() == 0) {
+        abrirOuAtivarAba(0);
+        return;
+    }
+
+    m_tabWidget->setVisible(visivel);
     m_actTogglePainel->setChecked(visivel);
     if (visivel) {
         const int totalWidth = width();
         if (m_splitter->sizes().value(1, 0) < 100) {
-            m_splitter->setSizes({int(totalWidth * 0.72), int(totalWidth * 0.28)});
+            m_splitter->setSizes({int(totalWidth * 0.70), int(totalWidth * 0.30)});
         }
     }
 
@@ -1405,12 +1496,73 @@ void MainWindow::onTogglePainelLateral(bool visivel)
     });
 }
 
+void MainWindow::abrirOuAtivarAba(int index)
+{
+    QWidget *targetWidget = nullptr;
+    QString titulo;
+
+    switch (index) {
+        case 0:
+            targetWidget = m_tabTraducao;
+            titulo = "Tradução";
+            break;
+        case 1:
+            targetWidget = m_tabTutor;
+            titulo = "Tutor de Fala";
+            break;
+        case 2:
+            targetWidget = m_tabChatIA;
+            titulo = "Assistente IA";
+            break;
+        case 3:
+            targetWidget = m_tabAnotacoes;
+            titulo = "Bloco de Notas";
+            break;
+        case 4:
+            targetWidget = m_tabConfiguracoes;
+            titulo = "Desempenho & Layout";
+            break;
+        default:
+            return;
+    }
+
+    if (!targetWidget) return;
+
+    int tabIdx = m_tabWidget->indexOf(targetWidget);
+    if (tabIdx == -1) {
+        tabIdx = m_tabWidget->addTab(targetWidget, titulo);
+
+        auto *btnClose = new QToolButton();
+        btnClose->setObjectName("btnFecharAbaItem");
+        btnClose->setText("✕");
+        btnClose->setToolTip(QString("Fechar aba \"%1\"").arg(titulo));
+        btnClose->setCursor(Qt::PointingHandCursor);
+        connect(btnClose, &QToolButton::clicked, this, [this, targetWidget]() {
+            int idx = m_tabWidget->indexOf(targetWidget);
+            if (idx != -1) {
+                onFecharAbaPainel(idx);
+            }
+        });
+        m_tabWidget->tabBar()->setTabButton(tabIdx, QTabBar::RightSide, btnClose);
+    }
+
+    m_tabWidget->setCurrentIndex(tabIdx);
+    onTogglePainelLateral(true);
+}
+
+void MainWindow::onFecharAbaPainel(int index)
+{
+    if (index >= 0 && index < m_tabWidget->count()) {
+        m_tabWidget->removeTab(index);
+        if (m_tabWidget->count() == 0) {
+            onTogglePainelLateral(false);
+        }
+    }
+}
+
 void MainWindow::onMudarAbaPainel(int index)
 {
-    onTogglePainelLateral(true);
-    if (index >= 0 && index < m_tabWidget->count()) {
-        m_tabWidget->setCurrentIndex(index);
-    }
+    abrirOuAtivarAba(index);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1503,9 +1655,27 @@ void MainWindow::onToggleModoCaptura(bool ativo)
 {
     m_modoCaptura = ativo;
     m_btnModoCaptura->setChecked(ativo);
+
+    if (m_comboFormatoSelecao && m_overlaySelecao) {
+        m_overlaySelecao->setFormato(
+            m_comboFormatoSelecao->currentIndex() == 0 
+                ? SelectionOverlayWidget::Formato::Retangular 
+                : SelectionOverlayWidget::Formato::Livre
+        );
+    }
+
     if (ativo) {
-        m_tipoCaptura = ModoCapturaRubberBand::Traducao;
+        if (m_activePdfView && m_overlaySelecao) {
+            m_overlaySelecao->setParent(m_activePdfView->viewport());
+            m_overlaySelecao->setGeometry(m_activePdfView->viewport()->rect());
+        }
+        if (m_tipoCaptura == ModoCapturaRubberBand::Nenhum) {
+            m_tipoCaptura = ModoCapturaRubberBand::Traducao;
+        }
     } else {
+        if (m_overlaySelecao) {
+            m_overlaySelecao->cancelar();
+        }
         if (m_rubberBand && m_rubberBand->isVisible()) {
             m_rubberBand->hide();
         }
@@ -1518,9 +1688,11 @@ void MainWindow::onToggleModoCaptura(bool ativo)
     m_pdfView2->viewport()->setCursor(cursor);
 
     if (ativo) {
-        appendLog("Modo de seleção ativado: arraste sobre o parágrafo (Esc para cancelar).");
+        const QString modoStr = (m_overlaySelecao && m_overlaySelecao->isLivre()) ? "Livre (desenho com mouse)" : "Retangular";
+        appendLog(QString("Modo de seleção [%1] ativado (Esc para cancelar).").arg(modoStr));
     }
 }
+
 
 void MainWindow::onTraduzirDireto()
 {
@@ -1546,6 +1718,11 @@ void MainWindow::onTraduzirDireto()
         modeloOllama = "llama3";
     }
 
+    m_timerRequisicaoIA.restart();
+    if (m_badgeMetricasIA) {
+        m_badgeMetricasIA->setText("Processando Tradução...");
+    }
+
     if (m_textoOcrAtual.startsWith("BASE64:")) {
         const QByteArray b64 = m_textoOcrAtual.mid(7).toLatin1();
         m_net->traduzirDireto(QString(), b64, geminiKey, modeloOllama);
@@ -1559,6 +1736,12 @@ void MainWindow::onTraducaoDiretaResultado(const QString &textoIngles, const QSt
     m_textoOriginalEn = textoIngles;
     m_textoTraduzidoPt = traducaoPortugues;
     
+    const qint64 elapsedMs = m_timerRequisicaoIA.isValid() ? m_timerRequisicaoIA.elapsed() : 0;
+    const QString mod = modeloUsado.isEmpty() ? m_iaModelo : modeloUsado;
+    if (m_badgeMetricasIA) {
+        m_badgeMetricasIA->setText(QString("%1 • %2ms").arg(mod).arg(elapsedMs));
+    }
+
     if (m_promptTextoTutor) {
         m_promptTextoTutor->setText(textoIngles);
     }
@@ -1566,11 +1749,30 @@ void MainWindow::onTraducaoDiretaResultado(const QString &textoIngles, const QSt
     m_btnOuvir->setEnabled(!textoIngles.isEmpty());
     m_btnGravar->setEnabled(!textoIngles.isEmpty());
 
-    // Se o painel estiver oculto, abre e foca na tradução
-    if (!m_painelDir->isVisible()) {
-        onTogglePainelLateral(true);
+    // Controle rigoroso da Janela Flutuante vs Painel Lateral:
+    // A janela flutuante só aparece quando acionada via atalho em tela cheia (1º toque)
+    if (m_origemCapturaTelaCheiaFlutuante) {
+        m_origemCapturaTelaCheiaFlutuante = false;
+        if (m_quickLookupPopover) {
+            const QPoint posGlobal = QCursor::pos();
+            m_quickLookupPopover->exibirTraducao(textoIngles, traducaoPortugues, mod, posGlobal);
+        }
+        // Não abre a aba lateral em tela cheia para manter leitura imersiva e sem distrações
+    } else {
+        if (m_quickLookupPopover && m_quickLookupPopover->isVisible() && m_quickLookupPopover->modoAtual() == QuickLookupPopover::Modo::Traducao) {
+            m_quickLookupPopover->atualizarResultadoTraducao(traducaoPortugues, mod);
+        }
+        // Modo janela normal ou solicitação convencional: atualiza/abre a aba lateral
+        if (!isFullScreen() || (m_tabWidget && m_tabWidget->isVisible())) {
+            abrirOuAtivarAba(0);
+        }
     }
-    m_tabWidget->setCurrentIndex(0);
+
+    if (m_txtTraducaoOriginalEn && !m_txtTraducaoOriginalEn->hasFocus()) {
+        m_txtTraducaoOriginalEn->blockSignals(true);
+        m_txtTraducaoOriginalEn->setPlainText(textoIngles);
+        m_txtTraducaoOriginalEn->blockSignals(false);
+    }
 
     const QString badgeTag = !modeloUsado.isEmpty()
         ? QString(" <span style='color: #10b981; font-size: 10px; font-weight: 600; background: #064e3b; padding: 2px 6px; border-radius: 4px;'>[%1]</span>")
@@ -1578,12 +1780,8 @@ void MainWindow::onTraducaoDiretaResultado(const QString &textoIngles, const QSt
         : QString();
 
     m_promptTraducao->setHtml(
-        "<div style='margin-bottom: 8px;'>"
-        "<span style='color: #6b7280; font-size: 10px; font-weight: 600; text-transform: uppercase;'>Texto Original (EN)</span><br>"
-        "<span style='color: #9ca3af; font-size: 12px; line-height: 1.4;'>" + textoIngles.toHtmlEscaped() + "</span>"
-        "</div><hr style='border: 0; border-top: 1px solid #27282d; margin: 8px 0;'>"
         "<div>"
-        "<span style='color: #60a5fa; font-size: 10px; font-weight: 600; text-transform: uppercase;'>Tradução Técnica (PT-BR)</span>" + badgeTag + "<br>"
+        "<span style='color: #60a5fa; font-size: 11px; font-weight: 600; text-transform: uppercase;'>Tradução Técnica (PT-BR)</span>" + badgeTag + "<br><br>"
         "<span style='color: #f3f4f6; font-size: 13px; font-weight: 500; line-height: 1.5;'>" + traducaoPortugues.toHtmlEscaped() + "</span>"
         "</div>"
     );
@@ -1672,13 +1870,17 @@ void MainWindow::onGravarVozTutor()
 
         m_gravando = true;
         m_btnGravar->setText("Parar e Avaliar");
-        m_btnGravar->setStyleSheet("background-color: #dc2626; color: #ffffff; border: 1px solid #ef4444;");
+        m_btnGravar->setProperty("recording", true);
+        m_btnGravar->style()->unpolish(m_btnGravar);
+        m_btnGravar->style()->polish(m_btnGravar);
         appendLog("Microfone aberto: leia o texto em inglês em voz alta...");
         m_net->iniciarGravacao();
     } else {
         m_gravando = false;
         m_btnGravar->setText("Gravar Minha Voz");
-        m_btnGravar->setStyleSheet(QString());
+        m_btnGravar->setProperty("recording", false);
+        m_btnGravar->style()->unpolish(m_btnGravar);
+        m_btnGravar->style()->polish(m_btnGravar);
         appendLog("Processando áudio com Whisper...");
         m_net->pararGravacao("en"); // Transcreve em inglês para o tutor
     }
@@ -1735,6 +1937,9 @@ void MainWindow::onAvaliacaoPronunciaResultado(int nota, const QString &feedback
     }
 
     m_txtFeedbackTutor->setHtml(html);
+    if (m_quickLookupPopover && m_quickLookupPopover->isVisible()) {
+        m_quickLookupPopover->atualizarResultadoTutor(nota, feedback, textoFalado, palavrasAusentes);
+    }
     appendLog(QString("Avaliação concluída: %1% de acurácia.").arg(nota), "success");
 }
 
@@ -1827,14 +2032,9 @@ void MainWindow::atualizarBadgeModeloAtivo()
 
 void MainWindow::onToggleTelaCheia()
 {
-    if (!m_pdfDoc || m_pdfDoc->pageCount() == 0) {
-        if (!isFullScreen()) showFullScreen(); else showMaximized();
-        return;
-    }
-
-    const int pagReal = (m_modoVis == ModoVisualizacao::Continuo) 
-                        ? obterPaginaVisivelNoModoContinuo() 
-                        : m_paginaAtual;
+    const int pagReal = (m_pdfDoc && m_pdfDoc->pageCount() > 0)
+                        ? ((m_modoVis == ModoVisualizacao::Continuo) ? obterPaginaVisivelNoModoContinuo() : m_paginaAtual)
+                        : 0;
     m_paginaSalvaResize = pagReal;
 
     if (m_modoVis == ModoVisualizacao::Continuo && m_pdfView && m_pdfView->verticalScrollBar()) {
@@ -1849,15 +2049,52 @@ void MainWindow::onToggleTelaCheia()
     const bool paraTelaCheia = !isFullScreen();
     if (paraTelaCheia) {
         m_barraVisPreviaVisivel = m_barraVis ? m_barraVis->isVisible() : true;
-        menuBar()->setVisible(false);
+        if (m_titleBar) m_titleBar->setVisible(false);
+        if (m_customMenuBar) m_customMenuBar->setVisible(false);
         if (m_barraVis) m_barraVis->setVisible(false);
+        if (statusBar()) statusBar()->setVisible(false);
         showFullScreen();
-        appendLog("Modo Tela Cheia ativado: barras superiores ocultadas. Pressione F11 para restaurar.", "info");
+        appendLog("Modo Tela Cheia ativado: documento e aba ativa em foco total. Pressione F11 ou Esc para restaurar.", "info");
     } else {
-        showMaximized();
-        menuBar()->setVisible(true);
+        if (m_floatingHud) m_floatingHud->hide();
+        if (m_titleBar) m_titleBar->setVisible(true);
+        if (m_customMenuBar) m_customMenuBar->setVisible(true);
         if (m_barraVis) m_barraVis->setVisible(m_barraVisPreviaVisivel);
-        appendLog("Modo Tela Cheia desativado: barras superiores restauradas.", "info");
+        if (statusBar()) statusBar()->setVisible(true);
+
+        // Sai do modo de tela cheia para normal antes de maximizar
+        showNormal();
+
+        // No Linux com janelas sem borda (Frameless), força a geometria do espaço de trabalho da tela
+        // para que a janela nunca fique encolhida/comprimida na parte inferior mostrando o desktop
+        QScreen *scr = screen();
+        if (!scr) scr = QGuiApplication::primaryScreen();
+        if (scr) {
+            setGeometry(scr->availableGeometry());
+        }
+        showMaximized();
+
+        if (centralWidget()) {
+            centralWidget()->updateGeometry();
+        }
+        updateGeometry();
+
+        // Confirmação para gerenciadores de janelas que demoram a processar o cancelamento do FullScreen
+        QTimer::singleShot(50, this, [this]() {
+            if (!isFullScreen()) {
+                QScreen *s = screen();
+                if (!s) s = QGuiApplication::primaryScreen();
+                if (s) {
+                    const QRect av = s->availableGeometry();
+                    if (geometry().width() < av.width() || geometry().height() < av.height()) {
+                        setGeometry(av);
+                    }
+                }
+                showMaximized();
+            }
+        });
+
+        appendLog("Modo Tela Cheia desativado: barras restauradas.", "info");
     }
 
     if (m_timerDebounceResize) {
@@ -1912,6 +2149,12 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
     }
 
     if (event->key() == Qt::Key_Escape) {
+        if (m_overlaySelecao && m_overlaySelecao->isAtivo()) {
+            m_overlaySelecao->cancelar();
+            appendLog("Desenho da seleção cancelado. Selecione novamente quando desejar.", "info");
+            event->accept();
+            return;
+        }
         if (m_rubberBand && m_rubberBand->isVisible()) {
             m_rubberBand->hide();
             m_rbOrigin = QPoint();
@@ -1922,6 +2165,8 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
         if (m_modoCaptura) {
             onToggleModoCaptura(false);
             m_tipoCaptura = ModoCapturaRubberBand::Nenhum;
+            m_origemCapturaTelaCheiaFlutuante = false;
+            m_ultimoAtalhoTelaCheia = -1;
             appendLog("Modo de seleção desativado.", "info");
             event->accept();
             return;
@@ -1936,7 +2181,7 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Manipulação de Eventos do Mouse (Seleção Rubber Band)
+// Manipulação de Eventos do Mouse (Seleção Rubber Band e Desenho Livre)
 // ═════════════════════════════════════════════════════════════════════════════
 
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
@@ -1964,6 +2209,11 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
         }
 
         if (ke->key() == Qt::Key_Escape) {
+            if (m_overlaySelecao && m_overlaySelecao->isAtivo()) {
+                m_overlaySelecao->cancelar();
+                appendLog("Desenho da seleção cancelado. Selecione novamente quando desejar.", "info");
+                return true;
+            }
             if (m_rubberBand && m_rubberBand->isVisible()) {
                 m_rubberBand->hide();
                 m_rbOrigin = QPoint();
@@ -1973,6 +2223,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             if (m_modoCaptura) {
                 onToggleModoCaptura(false);
                 m_tipoCaptura = ModoCapturaRubberBand::Nenhum;
+                m_origemCapturaTelaCheiaFlutuante = false;
+                m_ultimoAtalhoTelaCheia = -1;
                 appendLog("Modo de seleção desativado.", "info");
                 return true;
             }
@@ -1985,12 +2237,13 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     }
     case QEvent::MouseButtonPress: {
         auto *me = static_cast<QMouseEvent*>(event);
-        // Modo de captura (rubber band)
+        // Modo de captura (overlay retangular ou livre)
         if (me->button() == Qt::LeftButton && m_modoCaptura) {
-            m_rbOrigin = me->pos();
-            m_rubberBand->setParent(view->viewport());
-            m_rubberBand->setGeometry(QRect(m_rbOrigin, QSize()));
-            m_rubberBand->show();
+            if (m_overlaySelecao) {
+                m_overlaySelecao->setParent(view->viewport());
+                m_overlaySelecao->setGeometry(view->viewport()->rect());
+                m_overlaySelecao->iniciar(me->pos());
+            }
             return true;
         }
         // Modo pan (mao): clique e segura para arrastar
@@ -2004,9 +2257,30 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     }
     case QEvent::MouseMove: {
         auto *me = static_cast<QMouseEvent*>(event);
-        // Arrastar rubber band
-        if (m_modoCaptura && m_rubberBand->isVisible()) {
-            m_rubberBand->setGeometry(QRect(m_rbOrigin, me->pos()).normalized());
+
+        // Conceito 1: Revela o Floating HUD quando o cursor se aproxima do rodapé em tela cheia
+        if (isFullScreen() && m_floatingHud) {
+            const int mouseY = me->globalPosition().toPoint().y();
+            const int screenBottom = screen() ? screen()->geometry().bottom() : height();
+            if (mouseY >= (screenBottom - 130)) {
+                if (m_pdfDoc && m_pdfDoc->pageCount() > 0) {
+                    m_floatingHud->atualizarPagina(m_paginaAtual + 1, m_pdfDoc->pageCount());
+                }
+                if (m_pdfView) {
+                    m_floatingHud->atualizarZoom(m_pdfView->zoomFactor());
+                }
+                m_floatingHud->adjustSize();
+                const int hudW = m_floatingHud->width();
+                const int hudH = m_floatingHud->height();
+                m_floatingHud->move((width() - hudW) / 2, height() - hudH - 24);
+                m_floatingHud->raise();
+                m_floatingHud->mostrarTemporariamente();
+            }
+        }
+
+        // Arrastar overlay de selecao
+        if (m_modoCaptura && m_overlaySelecao && m_overlaySelecao->isAtivo()) {
+            m_overlaySelecao->atualizar(me->pos());
             return true;
         }
         // Arrastar pan
@@ -2023,45 +2297,90 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
     }
     case QEvent::MouseButtonRelease: {
         auto *me = static_cast<QMouseEvent*>(event);
-        // Soltar rubber band
-        if (me->button() == Qt::LeftButton && m_modoCaptura && m_rubberBand->isVisible()) {
-            const QRect rect = m_rubberBand->geometry();
-            m_rubberBand->hide();
+        // Soltar selecao
+        if (me->button() == Qt::LeftButton && m_modoCaptura && m_overlaySelecao && m_overlaySelecao->isAtivo()) {
+            const QRect rect = m_overlaySelecao->boundingBox();
+            const QPolygonF poligono = m_overlaySelecao->poligono();
+            const bool isLivre = m_overlaySelecao->isLivre();
+            m_overlaySelecao->finalizar();
             const auto tipoCaptura = m_tipoCaptura;
             onToggleModoCaptura(false);
 
-            if (rect.width() > 15 && rect.height() > 10) {
-                const QPixmap pix = view->viewport()->grab(rect);
-                QByteArray bytes;
-                QBuffer buf(&bytes);
-                buf.open(QIODevice::WriteOnly);
-                pix.save(&buf, "PNG");
+            if (rect.width() > 10 && rect.height() > 10) {
+                const QString textoExtraido = extrairTextoOcrDaRegiao(rect, poligono, isLivre);
+                QByteArray bytesImg;
+                if (textoExtraido.isEmpty() || tipoCaptura == ModoCapturaRubberBand::CircuitoChat) {
+                    const QPixmap pix = view->viewport()->grab(rect);
+                    QBuffer buf(&bytesImg);
+                    buf.open(QIODevice::WriteOnly);
+                    pix.save(&buf, "PNG");
+                }
 
-                if (tipoCaptura == ModoCapturaRubberBand::CircuitoChat) {
-                    m_chatImagemBase64 = QString::fromLatin1(bytes.toBase64());
-                    if (m_promptInput) {
-                        m_promptInput->showImagePreview(m_chatImagemBase64, QString("Circuito capturado (%1x%2 px)").arg(rect.width()).arg(rect.height()));
-                    }
-                    onTogglePainelLateral(true);
-                    m_tabWidget->setCurrentIndex(2); // Aba do Chat IA
-                    if (m_promptInput) {
-                        // m_promptInput->setFocus();
-                    }
-                    appendLog("Circuito capturado com sucesso e anexado ao Assistente IA.", "success");
-                } else {
-                    m_textoOcrAtual = "BASE64:" + bytes.toBase64();
-                    m_btnTraduzir->setEnabled(true);
+                if (m_origemCapturaTelaCheiaFlutuante) {
+                    const QPoint posGlobal = QCursor::pos();
+                    m_origemCapturaTelaCheiaFlutuante = false;
 
-                    if (m_chkTraducaoAuto->isChecked()) {
+                    if (m_ultimoAtalhoTelaCheia == 1) { // Tutor de Pronúncia (Ctrl+U)
+                        if (m_quickLookupPopover) {
+                            m_quickLookupPopover->exibirTutor(textoExtraido, posGlobal);
+                        }
+                        appendLog("Tutor de Fala flutuante exibido com sucesso.", "success");
+                    } else if (m_ultimoAtalhoTelaCheia == 2) { // Assistente IA (Ctrl+I)
+                        const QString b64 = bytesImg.isEmpty() ? QString() : QString::fromLatin1(bytesImg.toBase64());
+                        m_chatImagemBase64 = b64;
+                        if (m_quickLookupPopover) {
+                            m_quickLookupPopover->exibirAssistenteIA(textoExtraido, b64, posGlobal);
+                        }
+                        appendLog("Assistente IA flutuante exibido com sucesso.", "success");
+                    } else if (m_ultimoAtalhoTelaCheia == 3) { // Bloco de Notas (Ctrl+N)
+                        if (m_quickLookupPopover) {
+                            m_quickLookupPopover->exibirAnotacoes(textoExtraido, posGlobal);
+                        }
+                        appendLog("Bloco de Notas flutuante exibido com sucesso.", "success");
+                    } else { // Tradução Técnica (Ctrl+T)
+                        if (!textoExtraido.isEmpty()) {
+                            m_textoOcrAtual = textoExtraido;
+                            m_btnTraduzir->setEnabled(true);
+                            appendLog(QString("Texto extraído instantaneamente do cache OCR (%1 palavras).").arg(textoExtraido.split(' ', Qt::SkipEmptyParts).size()), "success");
+                        } else {
+                            m_textoOcrAtual = "BASE64:" + bytesImg.toBase64();
+                            m_btnTraduzir->setEnabled(true);
+                        }
+                        m_origemCapturaTelaCheiaFlutuante = true; // Mantém ativo para onTraducaoDiretaResultado
                         onTraduzirDireto();
+                    }
+                } else {
+                    // Modo tradicional (fora de tela cheia ou pelo botão Modo Seleção da barra lateral)
+                    if (tipoCaptura == ModoCapturaRubberBand::CircuitoChat) {
+                        m_chatImagemBase64 = QString::fromLatin1(bytesImg.toBase64());
+                        if (m_promptInput) {
+                            m_promptInput->showImagePreview(m_chatImagemBase64, QString("Circuito capturado (%1x%2 px)").arg(rect.width()).arg(rect.height()));
+                        }
+                        abrirOuAtivarAba(2); // Aba do Chat IA
+                        appendLog("Circuito capturado e anexado ao Assistente IA.", "success");
                     } else {
-                        appendLog("Região capturada. Clique em 'Traduzir Seleção'.");
+                        if (!textoExtraido.isEmpty()) {
+                            m_textoOcrAtual = textoExtraido;
+                            m_btnTraduzir->setEnabled(true);
+                            appendLog(QString("Texto extraído instantaneamente do cache OCR (%1 palavras).").arg(textoExtraido.split(' ', Qt::SkipEmptyParts).size()), "success");
+                        } else {
+                            m_textoOcrAtual = "BASE64:" + bytesImg.toBase64();
+                            m_btnTraduzir->setEnabled(true);
+                        }
+
+                        if (m_chkTraducaoAuto->isChecked()) {
+                            onTraduzirDireto();
+                        } else {
+                            appendLog("Região capturada. Clique em 'Traduzir Seleção'.");
+                        }
                     }
                 }
             }
+
             m_tipoCaptura = ModoCapturaRubberBand::Nenhum;
             return true;
         }
+
         // Soltar pan
         if (me->button() == Qt::LeftButton && m_panModo) {
             m_panModo = false;
@@ -2303,7 +2622,226 @@ void MainWindow::atualizarInfoNavegacao()
         }
     }
     m_spinPagina->blockSignals(false);
+
+    // ── OCR Preemptivo em Segundo Plano com Debounce e Limpeza Temporal ──
+    if (temDoc) {
+        if (m_paginaAnteriorOcr != -1 && m_paginaAnteriorOcr != m_paginaAtual) {
+            if (!m_timerLimpezaCacheOcr) {
+                m_timerLimpezaCacheOcr = new QTimer(this);
+                m_timerLimpezaCacheOcr->setSingleShot(true);
+                connect(m_timerLimpezaCacheOcr, &QTimer::timeout, this, [this]() {
+                    const QList<int> chaves = m_cacheOcrPaginas.keys();
+                    for (int p : chaves) {
+                        if (p != m_paginaAtual) {
+                            m_cacheOcrPaginas.remove(p);
+                        }
+                    }
+                });
+            }
+            m_timerLimpezaCacheOcr->start(8000); // Descarta páginas anteriores após 8 segundos
+        }
+        m_paginaAnteriorOcr = m_paginaAtual;
+
+        if (!m_timerOcrPreemptivo) {
+            m_timerOcrPreemptivo = new QTimer(this);
+            m_timerOcrPreemptivo->setSingleShot(true);
+            connect(m_timerOcrPreemptivo, &QTimer::timeout, this, &MainWindow::executarOcrPreemptivoPaginaAtual);
+        }
+        // Debounce de 1.8 segundos: se o usuário estiver rolando rápido, não processa repetidamente
+        m_timerOcrPreemptivo->start(1800);
+    }
 }
+
+void MainWindow::executarOcrPreemptivoPaginaAtual()
+{
+    if (!m_pdfDoc || m_pdfDoc->pageCount() == 0) return;
+    const int pag = m_paginaAtual;
+    if (pag < 0 || pag >= m_pdfDoc->pageCount()) return;
+
+    // Se já estiver no cache, não reprocessa
+    if (m_cacheOcrPaginas.contains(pag)) {
+        return;
+    }
+
+    const QSizeF ptSize = m_pdfDoc->pagePointSize(pag);
+    if (ptSize.isEmpty()) return;
+
+    // Renderiza em resolução nítida (escala 2.0x, ~150-200 DPI) para precisão de OCR
+    const qreal scale = 2.0;
+    const QSize imgSize = (ptSize * scale).toSize();
+    const QImage img = m_pdfDoc->render(pag, imgSize);
+    if (img.isNull()) return;
+
+    QByteArray bytes;
+    QBuffer buf(&bytes);
+    buf.open(QIODevice::WriteOnly);
+    img.save(&buf, "PNG");
+
+    m_net->executarOcrPaginaCompleta(pag, bytes.toBase64());
+}
+
+void MainWindow::onOcrPaginaCompletaResultado(int pagina, int largura, int altura, const QJsonArray &palavras, const QString &textoCompleto)
+{
+    CacheOcrPagina cache;
+    cache.pagina = pagina;
+    cache.largura = largura;
+    cache.altura = altura;
+    cache.textoCompleto = textoCompleto;
+    cache.criadoEm = QDateTime::currentDateTime();
+
+    for (const auto &val : palavras) {
+        const QJsonObject obj = val.toObject();
+        OcrPalavra p;
+        p.texto = obj["text"].toString();
+        p.box = QRect(obj["x"].toInt(), obj["y"].toInt(), obj["w"].toInt(), obj["h"].toInt());
+        cache.palavras.append(p);
+    }
+
+    m_cacheOcrPaginas.insert(pagina, cache);
+}
+
+QString MainWindow::extrairTextoOcrDaRegiao(const QRect &rect, const QPolygonF &poligono, bool isLivre)
+{
+    int pagAlvo = m_paginaAtual;
+    if (m_activePdfView == m_pdfView2) {
+        pagAlvo = m_paginaAtual + 1;
+    }
+
+    if (!m_cacheOcrPaginas.contains(pagAlvo)) {
+        return QString();
+    }
+
+    const CacheOcrPagina &cache = m_cacheOcrPaginas[pagAlvo];
+    if (cache.largura <= 0 || cache.altura <= 0 || cache.palavras.isEmpty()) {
+        return QString();
+    }
+
+    QPdfView *view = m_activePdfView ? m_activePdfView : m_pdfView;
+    if (!view || !m_pdfDoc || pagAlvo >= m_pdfDoc->pageCount()) return QString();
+
+    const QSizeF ptSize = m_pdfDoc->pagePointSize(pagAlvo);
+    if (ptSize.isEmpty()) return QString();
+
+    const qreal zoom = view->zoomFactor();
+    const qreal pageWidthOnScreen = ptSize.width() * zoom;
+    const qreal pageHeightOnScreen = ptSize.height() * zoom;
+
+    qreal pageLeft = 0;
+    qreal pageTop = 0;
+    const int vpW = view->viewport()->width();
+    const int vpH = view->viewport()->height();
+
+    if (m_modoVis == ModoVisualizacao::Continuo) {
+        const int scrollY = view->verticalScrollBar() ? view->verticalScrollBar()->value() : 0;
+        const int scrollX = view->horizontalScrollBar() ? view->horizontalScrollBar()->value() : 0;
+        pageTop = calcularScrollVerticalParaPagina(pagAlvo, zoom) - scrollY;
+        pageLeft = (vpW > pageWidthOnScreen) ? ((vpW - pageWidthOnScreen) / 2.0) : -scrollX;
+    } else {
+        const int scrollY = view->verticalScrollBar() ? view->verticalScrollBar()->value() : 0;
+        const int scrollX = view->horizontalScrollBar() ? view->horizontalScrollBar()->value() : 0;
+        pageTop = (vpH > pageHeightOnScreen) ? ((vpH - pageHeightOnScreen) / 2.0) : -scrollY;
+        pageLeft = (vpW > pageWidthOnScreen) ? ((vpW - pageWidthOnScreen) / 2.0) : -scrollX;
+    }
+
+    struct PalavraSelecionada {
+        QString texto;
+        int x;
+        int y;
+    };
+    QList<PalavraSelecionada> selecionadas;
+
+    for (const auto &p : cache.palavras) {
+        if (p.texto.trimmed().isEmpty()) continue;
+
+        const qreal normCx = (p.box.x() + (p.box.width() / 2.0)) / static_cast<qreal>(cache.largura);
+        const qreal normCy = (p.box.y() + (p.box.height() / 2.0)) / static_cast<qreal>(cache.altura);
+
+        const qreal sx = pageLeft + (normCx * pageWidthOnScreen);
+        const qreal sy = pageTop + (normCy * pageHeightOnScreen);
+        const QPointF ptTela(sx, sy);
+
+        bool contido = false;
+        if (isLivre && poligono.size() >= 3) {
+            contido = poligono.containsPoint(ptTela, Qt::OddEvenFill);
+        } else {
+            contido = rect.contains(ptTela.toPoint());
+        }
+
+        if (contido) {
+            selecionadas.append({ p.texto, p.box.x(), p.box.y() });
+        }
+    }
+
+    if (selecionadas.isEmpty()) return QString();
+
+    // Ordenação linear em ordem de leitura natural (linha por linha, esquerda para direita)
+    std::sort(selecionadas.begin(), selecionadas.end(), [](const PalavraSelecionada &a, const PalavraSelecionada &b) {
+        const int linhaA = a.y / 24;
+        const int linhaB = b.y / 24;
+        if (linhaA != linhaB) return linhaA < linhaB;
+        return a.x < b.x;
+    });
+
+    QStringList resultado;
+    for (const auto &p : selecionadas) {
+        resultado.append(p.texto);
+    }
+    return resultado.join(' ');
+}
+
+void MainWindow::executarComandoAba(int index)
+{
+    const qint64 agora = QDateTime::currentMSecsSinceEpoch();
+
+    if (isFullScreen()) {
+        // Se a barra lateral já estiver aberta e exibindo a aba solicitada, pressionar novamente fecha para restaurar tela limpa
+        if (m_tabWidget->isVisible() && m_tabWidget->currentIndex() == index) {
+            onTogglePainelLateral(false);
+            m_ultimoAtalhoTelaCheia = -1;
+            m_contagemAtalhoTelaCheia = 0;
+            return;
+        }
+
+        // Verifica se é o segundo toque consecutivo do mesmo atalho (dentro de 4s ou enquanto em modo de seleção)
+        const bool segundoToque = (m_ultimoAtalhoTelaCheia == index &&
+                                  (m_modoCaptura || (agora - m_tempoUltimoAtalhoTelaCheia < 4000)));
+
+        if (segundoToque) {
+            // 2º Toque em tela cheia: Abre a aba lateral inteira
+            if (m_modoCaptura) {
+                onToggleModoCaptura(false);
+            }
+            m_ultimoAtalhoTelaCheia = -1;
+            m_contagemAtalhoTelaCheia = 0;
+            m_origemCapturaTelaCheiaFlutuante = false;
+            abrirOuAtivarAba(index);
+            appendLog(QString("Painel lateral exibido em tela cheia (aba %1).").arg(index + 1), "info");
+            return;
+        }
+
+        // 1º Toque em tela cheia:
+        m_ultimoAtalhoTelaCheia = index;
+        m_contagemAtalhoTelaCheia = 1;
+        m_tempoUltimoAtalhoTelaCheia = agora;
+        m_origemCapturaTelaCheiaFlutuante = true;
+
+        if (index == 2) {
+            m_tipoCaptura = ModoCapturaRubberBand::CircuitoChat;
+        } else {
+            m_tipoCaptura = ModoCapturaRubberBand::Traducao;
+        }
+
+        onToggleModoCaptura(true);
+
+        const QString formatoStr = (m_overlaySelecao && m_overlaySelecao->isLivre()) ? "Formato Livre" : "Retângulo";
+        appendLog(QString("Modo de seleção [%1] ativado. Selecione na tela (ou pressione novamente para abrir o painel lateral).").arg(formatoStr), "info");
+    } else {
+        // Modo janela normal: Abre ou alterna a aba lateral normalmente
+        m_origemCapturaTelaCheiaFlutuante = false;
+        abrirOuAtivarAba(index);
+    }
+}
+
 
 void MainWindow::aplicarZoom(qreal fator)
 {
@@ -2680,8 +3218,12 @@ void MainWindow::onLimparOcrResultado(const QString &texto)
 
 void MainWindow::onGravacaoIniciada()
 {
+    if (m_quickLookupPopover && m_quickLookupPopover->isVisible()) {
+        m_quickLookupPopover->setGravandoTutor(true);
+    }
     appendLog("Gravação ativa no microfone.");
 }
+
 
 void MainWindow::appendLog(const QString &mensagem, const QString &tipo)
 {
@@ -2827,6 +3369,11 @@ void MainWindow::onEnviarChat()
 
     if (m_promptInput) m_promptInput->setSendButtonBusy(true);
     m_lblStatus->setText("Consultando Assistente IA...");
+
+    m_timerRequisicaoIA.restart();
+    if (m_badgeMetricasIA) {
+        m_badgeMetricasIA->setText(QString("IA (%1)...").arg(m_iaModelo));
+    }
 
     m_net->enviarMensagemChat(texto, imgB64, m_chatHistoricoJson, m_iaProvedor, m_iaApiKey, m_iaModelo);
 }
@@ -3123,6 +3670,11 @@ void MainWindow::onChatRespostaResultado(const QString &resposta, const QString 
     if (m_promptInput) m_promptInput->setSendButtonBusy(false);
     m_lblStatus->setText("Pronto");
 
+    const qint64 elapsedMs = m_timerRequisicaoIA.isValid() ? m_timerRequisicaoIA.elapsed() : 0;
+    if (m_badgeMetricasIA && elapsedMs > 0) {
+        m_badgeMetricasIA->setText(QString("%1 • %2ms").arg(modelo).arg(elapsedMs));
+    }
+
     // Salva no histórico JSON
     QJsonObject botMsg;
     botMsg["role"] = "assistant";
@@ -3141,6 +3693,9 @@ void MainWindow::onChatRespostaResultado(const QString &resposta, const QString 
 
     m_chatHistorico->append(botHtml);
     m_chatHistorico->verticalScrollBar()->setValue(m_chatHistorico->verticalScrollBar()->maximum());
+    if (m_quickLookupPopover && m_quickLookupPopover->isVisible()) {
+        m_quickLookupPopover->atualizarRespostaChat(resposta, modelo);
+    }
     appendLog(QString("Resposta do Assistente IA recebida (%1).").arg(provedor), "success");
 }
 
@@ -3149,15 +3704,6 @@ void MainWindow::onConfigurarIA()
     QDialog dlg(this);
     dlg.setWindowTitle("Configurar API");
     dlg.setMinimumWidth(420);
-    dlg.setStyleSheet(
-        "QDialog { background-color: #131418; color: #e2e8f0; }"
-        "QLabel { color: #cbd5e1; font-size: 12px; }"
-        "QLineEdit, QComboBox {"
-        "  background-color: #1c1e24; border: 1px solid #333846; border-radius: 6px; padding: 6px 8px; color: #f1f5f9; font-size: 12px;"
-        "}"
-        "QLineEdit:focus, QComboBox:focus { border-color: #3b82f6; }"
-        "QPushButton { border-radius: 6px; padding: 6px 14px; font-weight: 500; font-size: 12px; }"
-    );
 
     auto *layout = new QVBoxLayout(&dlg);
     layout->setSpacing(12);
@@ -3179,7 +3725,6 @@ void MainWindow::onConfigurarIA()
     txtApiKey->setPlaceholderText("Chave de API do Google Gemini");
 
     auto *chkMostrarKey = new QCheckBox("Mostrar chave", &dlg);
-    chkMostrarKey->setStyleSheet("color: #94a3b8; font-size: 11px;");
     connect(chkMostrarKey, &QCheckBox::toggled, &dlg, [txtApiKey](bool checked) {
         txtApiKey->setEchoMode(checked ? QLineEdit::Normal : QLineEdit::Password);
     });
@@ -3189,7 +3734,7 @@ void MainWindow::onConfigurarIA()
     layoutKey->addWidget(chkMostrarKey);
 
     auto *lblLinkKey = new QLabel(
-        "<a href='https://aistudio.google.com/app/apikey' style='color:#60a5fa; text-decoration:none;'>"
+        "<a href='https://aistudio.google.com/app/apikey' style='color:#2F80ED; text-decoration:none;'>"
         "Gerar chave gratuita em aistudio.google.com</a>", &dlg);
     lblLinkKey->setOpenExternalLinks(true);
     layoutKey->addWidget(lblLinkKey);
@@ -3216,12 +3761,12 @@ void MainWindow::onConfigurarIA()
     auto *btnBox = new QHBoxLayout();
     btnBox->addStretch();
     auto *btnCancelar = new QPushButton("Cancelar", &dlg);
-    btnCancelar->setStyleSheet("background-color: #272a33; color: #94a3b8; border: 1px solid #3e4452;");
+    btnCancelar->setObjectName("btnSecundario");
     connect(btnCancelar, &QPushButton::clicked, &dlg, &QDialog::reject);
     btnBox->addWidget(btnCancelar);
 
     auto *btnSalvar = new QPushButton("Salvar", &dlg);
-    btnSalvar->setStyleSheet("background-color: #2563eb; color: #ffffff; border: none; font-weight: 600;");
+    btnSalvar->setObjectName("btnPrimario");
     connect(btnSalvar, &QPushButton::clicked, &dlg, &QDialog::accept);
     btnBox->addWidget(btnSalvar);
 
@@ -3252,7 +3797,7 @@ void MainWindow::onConfigurarIA()
 
 void MainWindow::verificarEIniciarBackend()
 {
-    if (m_backendProcess && m_backendProcess->state() == QProcess::Running) {
+    if (m_backendProcess && (m_backendProcess->state() == QProcess::Running || m_backendProcess->state() == QProcess::Starting)) {
         return;
     }
 
@@ -3260,12 +3805,18 @@ void MainWindow::verificarEIniciarBackend()
     QStringList candidatosDirs;
     candidatosDirs << appDir;
     candidatosDirs << appDir + "/backend";
+    candidatosDirs << appDir + "/backend_python";
     candidatosDirs << appDir + "/bin";
     candidatosDirs << QDir(appDir).filePath("..");
     candidatosDirs << QDir(appDir).filePath("../backend");
+    candidatosDirs << QDir(appDir).filePath("../backend_python");
     candidatosDirs << QDir(appDir).filePath("../bin");
     candidatosDirs << QDir(appDir).filePath("../..");
+    candidatosDirs << QDir(appDir).filePath("../../backend_python");
     candidatosDirs << QDir::currentPath();
+    candidatosDirs << QDir::currentPath() + "/backend_python";
+    candidatosDirs << QDir::homePath() + "/.local/share/vellum";
+    candidatosDirs << QDir::homePath() + "/.local/share/vellum/backend_python";
 
     QString execPath;
     QStringList args;
@@ -3311,15 +3862,27 @@ void MainWindow::verificarEIniciarBackend()
         if (QFile::exists(scriptMain)) {
             workingDir = base;
             const QString venvLinux = base + "/venv/bin/python3";
+            const QString venvParentLinux = QDir(base).filePath("../venv/bin/python3");
+            const QString venvShare = QDir::homePath() + "/.local/share/vellum/venv/bin/python3";
             const QString venvWinW = base + "/venv/Scripts/pythonw.exe";
+            const QString venvParentWinW = QDir(base).filePath("../venv/Scripts/pythonw.exe");
             const QString venvWin = base + "/venv/Scripts/python.exe";
+            const QString venvParentWin = QDir(base).filePath("../venv/Scripts/python.exe");
 
             if (QFile::exists(venvLinux)) {
                 execPath = venvLinux;
+            } else if (QFile::exists(venvParentLinux)) {
+                execPath = venvParentLinux;
+            } else if (QFile::exists(venvShare)) {
+                execPath = venvShare;
             } else if (QFile::exists(venvWinW)) {
                 execPath = venvWinW; // Sem console preto no Windows
+            } else if (QFile::exists(venvParentWinW)) {
+                execPath = venvParentWinW;
             } else if (QFile::exists(venvWin)) {
                 execPath = venvWin;
+            } else if (QFile::exists(venvParentWin)) {
+                execPath = venvParentWin;
             } else {
 #ifdef Q_OS_WIN
                 execPath = "pythonw";
@@ -3366,14 +3929,10 @@ void MainWindow::verificarEIniciarBackend()
                                 .arg(exitCode).arg(exitStatus == QProcess::CrashExit ? "Crash" : "Normal");
                 appendLog(msg, "error");
                 
-                QMessageBox msgBox(this);
-                msgBox.setWindowTitle("Erro no Motor de IA");
-                msgBox.setText("<b>O Vellum perdeu a conexão com o motor de Inteligência Artificial.</b>");
-                msgBox.setInformativeText("Isolamos os logs do backend em <i>vellum.log</i> para análise.\n\nO aplicativo tentará reiniciá-lo automaticamente.");
-                msgBox.setIcon(QMessageBox::Critical);
-                msgBox.exec();
+                // Não exibir QMessageBox bloqueante para evitar loop infinito na inicialização
+                if (m_lblStatusGeral) m_lblStatusGeral->setText("Erro no Motor IA - Tentando reiniciar...");
                 
-                // Reinicia em 3s
+                // Reinicia em 3s, mas sem bloquear a UI
                 QTimer::singleShot(3000, this, &MainWindow::verificarEIniciarBackend);
             }
         });
@@ -3584,5 +4143,55 @@ void MainWindow::onAtualizarContadorNotas()
     const int chars = texto.length();
     const int palavras = texto.isEmpty() ? 0 : texto.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts).count();
     m_lblStatusNota->setText(QString("%1 palavras | %2 caracteres").arg(palavras).arg(chars));
+}
+
+void MainWindow::registrarLancadorLinux()
+{
+#ifdef Q_OS_LINUX
+    QString appsDir = QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation);
+    if (appsDir.isEmpty()) {
+        appsDir = QDir::homePath() + "/.local/share/applications";
+    }
+    QDir().mkpath(appsDir);
+    QString desktopPath = appsDir + "/vellum.desktop";
+
+    QString appPath = QCoreApplication::applicationFilePath();
+    const QString appDir = QCoreApplication::applicationDirPath();
+    QString iconPath = QDir::homePath() + "/.local/share/icons/hicolor/512x512/apps/vellum.png";
+    if (!QFile::exists(iconPath)) {
+        const QString cand1 = QDir(appDir).filePath("../frontend_qt/resources/app_icon.png");
+        const QString cand2 = QDir::currentPath() + "/frontend_qt/resources/app_icon.png";
+        if (QFile::exists(cand1)) {
+            iconPath = QFileInfo(cand1).canonicalFilePath();
+        } else if (QFile::exists(cand2)) {
+            iconPath = QFileInfo(cand2).canonicalFilePath();
+        } else {
+            iconPath = "vellum";
+        }
+    }
+
+    QFile file(desktopPath);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream out(&file);
+        out << "[Desktop Entry]\n";
+        out << "Version=1.0\n";
+        out << "Type=Application\n";
+        out << "Name=Vellum\n";
+        out << "GenericName=Leitor Técnico & Tutor IA\n";
+        out << "Comment=Leitor Técnico e Tutor de Inglês com Inteligência Artificial\n";
+        out << "Exec=" << appPath << " %f\n";
+        out << "Icon=" << iconPath << "\n";
+        out << "Terminal=false\n";
+        out << "Categories=Office;Viewer;Education;Science;\n";
+        out << "MimeType=application/pdf;\n";
+        out << "StartupNotify=true\n";
+        file.close();
+
+        QFile::setPermissions(desktopPath, QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner |
+                                          QFile::ReadGroup | QFile::ExeGroup |
+                                          QFile::ReadOther | QFile::ExeOther);
+        QProcess::startDetached("update-desktop-database", QStringList() << appsDir);
+    }
+#endif
 }
 

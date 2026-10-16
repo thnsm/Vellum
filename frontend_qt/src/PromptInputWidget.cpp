@@ -23,14 +23,13 @@ void PromptInputWidget::setupUi() {
     m_lblThumbImage->setScaledContents(true);
     
     m_lblThumbText = new QLabel(this);
-    m_lblThumbText->setStyleSheet("color: #888; font-size: 12px;");
+    m_lblThumbText->setObjectName("lblThumbText");
     
-    m_btnRemoveThumb = new QPushButton("✖", this);
+    m_btnRemoveThumb = new QPushButton("×", this);
+    m_btnRemoveThumb->setObjectName("btnRemoveThumb");
     m_btnRemoveThumb->setFixedSize(24, 24);
     m_btnRemoveThumb->setToolTip("Remover anexo");
     m_btnRemoveThumb->setCursor(Qt::PointingHandCursor);
-    m_btnRemoveThumb->setStyleSheet("QPushButton { border: none; border-radius: 12px; background: #e81123; color: white; }"
-                                    "QPushButton:hover { background: #f1707a; }");
     
     previewLayout->addWidget(m_lblThumbImage);
     previewLayout->addWidget(m_lblThumbText);
@@ -39,6 +38,7 @@ void PromptInputWidget::setupUi() {
 
     // 2. Caixa de Texto
     m_textInput = new QTextEdit(this);
+    m_textInput->setObjectName("textInputPrompt");
     m_textInput->setPlaceholderText("Digite seu comando aqui... (Shift+Enter para enviar)");
     m_textInput->setMinimumHeight(60);
     m_textInput->installEventFilter(this); // Para capturar Shift+Enter
@@ -47,13 +47,14 @@ void PromptInputWidget::setupUi() {
     auto* toolbarLayout = new QHBoxLayout();
     toolbarLayout->setContentsMargins(0, 0, 0, 0);
     
-    m_btnAttachImage = new QPushButton("📷 Anexar", this);
-    m_btnCaptureCircuit = new QPushButton("✂ Capturar Área", this);
-    m_btnPasteSnippet = new QPushButton("📋 Colar Trecho", this);
-    m_btnSend = new QPushButton("🚀 Enviar", this);
-    
-    // Estilos temporários inline (idealmente virão do ThemeManager no futuro)
-    m_btnSend->setStyleSheet("background-color: #0078d4; color: white; font-weight: bold; border-radius: 4px; padding: 6px 12px;");
+    m_btnAttachImage = new QPushButton("Anexar", this);
+    m_btnAttachImage->setObjectName("btnSecundario");
+    m_btnCaptureCircuit = new QPushButton("Capturar Área", this);
+    m_btnCaptureCircuit->setObjectName("btnSecundario");
+    m_btnPasteSnippet = new QPushButton("Colar Trecho", this);
+    m_btnPasteSnippet->setObjectName("btnSecundario");
+    m_btnSend = new QPushButton("Enviar", this);
+    m_btnSend->setObjectName("btnSendPrompt");
     m_btnSend->setCursor(Qt::PointingHandCursor);
 
     toolbarLayout->addWidget(m_btnAttachImage);
@@ -133,10 +134,10 @@ bool PromptInputWidget::hasImage() const {
 
 void PromptInputWidget::setSendButtonBusy(bool busy) {
     if (busy) {
-        m_btnSend->setText("⏳ Carregando...");
+        m_btnSend->setText("Carregando...");
         m_btnSend->setEnabled(false);
     } else {
-        m_btnSend->setText("🚀 Enviar");
+        m_btnSend->setText("Enviar");
         m_btnSend->setEnabled(true);
     }
 }

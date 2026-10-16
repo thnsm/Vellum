@@ -7,7 +7,12 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+if [ -d "${SCRIPT_DIR}/../frontend_qt" ]; then
+    ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+else
+    ROOT_DIR="${SCRIPT_DIR}"
+fi
+cd "$ROOT_DIR"
 
 INSTALL_PREFIX="${HOME}/.local"
 BIN_DIR="${INSTALL_PREFIX}/bin"
@@ -28,7 +33,7 @@ echo "Executável: ${BIN_DIR}/vellum"
 echo ""
 
 # 1. Compilação do Frontend se necessário
-if [ ! -f "build_linux/Vellum" ]; then
+if [ ! -f "build_linux/Vellum" ] && [ ! -f "Vellum" ]; then
     echo "[1/5] Compilando Frontend C++ (Qt6)..."
     if ! command -v cmake >/dev/null 2>&1; then
         echo -e "\n[ERRO] O comando 'cmake' não foi encontrado."
@@ -47,21 +52,21 @@ if [ ! -f "build_linux/Vellum" ]; then
         exit 1
     fi
 
-    cmake -B build_linux -S qt_frontend -DCMAKE_BUILD_TYPE=Release
+    cmake -B build_linux -S frontend_qt -DCMAKE_BUILD_TYPE=Release
     cmake --build build_linux -j"$(nproc)"
 else
-    echo "[1/5] Frontend compilado detectado em build_linux/Vellum."
+    echo "[1/5] Frontend compilado detectado."
 fi
 
 # 2. Configuração do ambiente Python
 echo "[2/5] Verificando dependências do backend..."
-if [ ! -d "venv" ]; then
+if [ ! -d "venv" ] && [ ! -f "vellum_backend" ] && [ ! -f "dist/vellum_backend" ]; then
     echo "      Criando ambiente virtual Python..."
     python3 -m venv venv
     ./venv/bin/pip install --upgrade pip
-    ./venv/bin/pip install -r requirements.txt
+    ./venv/bin/pip install -r backend_python/requirements.txt
 else
-    echo "      Ambiente virtual Python detectado."
+    echo "      Ambiente Python / Backend detectado."
 fi
 
 # 3. Criação das pastas de destino
@@ -75,16 +80,18 @@ if [ -f "vellum_backend" ]; then
 elif [ -f "dist/vellum_backend" ]; then
     cp "dist/vellum_backend" "${OPT_DIR}/vellum_backend"
 else
-    cp "main.py" "${OPT_DIR}/main.py"
-    cp "requirements.txt" "${OPT_DIR}/requirements.txt"
+    cp "backend_python/main.py" "${OPT_DIR}/main.py"
+    cp "backend_python/requirements.txt" "${OPT_DIR}/requirements.txt"
     cp -r "venv" "${OPT_DIR}/" 2>/dev/null || true
 fi
 
 # Copia ícone oficial
-if [ -f "qt_frontend/resources/app_icon.png" ]; then
-    cp "qt_frontend/resources/app_icon.png" "${ICON_DIR}/vellum.png"
-elif [ -f "LOGO.png" ]; then
-    cp "LOGO.png" "${ICON_DIR}/vellum.png"
+if [ -f "frontend_qt/resources/app_icon.png" ]; then
+    cp "frontend_qt/resources/app_icon.png" "${ICON_DIR}/vellum.png"
+elif [ -f "frontend_qt/resources/LOGO.png" ]; then
+    cp "frontend_qt/resources/LOGO.png" "${ICON_DIR}/vellum.png"
+elif [ -f "vellum.png" ]; then
+    cp "vellum.png" "${ICON_DIR}/vellum.png"
 fi
 
 # 4. Criação do script launcher no ~/.local/bin/vellum
@@ -134,5 +141,5 @@ echo "Você já pode:"
 echo " 1. Abrir o Vellum pelo menu do seu sistema operacional."
 echo " 2. Executar no terminal: vellum [arquivo.pdf]"
 echo " 3. Abrir arquivos PDF com botão direito > Abrir com > Vellum."
-echo " 4. Para desinstalar a qualquer momento: ./uninstall_linux.sh"
+echo " 4. Para desinstalar a qualquer momento: ./instaladores_e_scripts/uninstall_linux.sh"
 echo ""

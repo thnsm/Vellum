@@ -32,10 +32,15 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMimeData>
+#include <QElapsedTimer>
 
 class NetworkManager;
 class PromptInputWidget;
 class ThemeManager;
+class TitleBar;
+class FloatingHUD;
+class QuickLookupPopover;
+class SelectionOverlayWidget;
 
 enum class ModoVisualizacao {
     UmaPagina,     // 1 página por vez
@@ -57,6 +62,8 @@ public:
     ~MainWindow() override = default;
 
     void carregarArquivoPdf(const QString &caminho);
+    void abrirOuAtivarAba(int index);
+    void onFecharAbaPainel(int index);
 
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
@@ -80,6 +87,10 @@ private slots:
     // ── Painel e Layout ───────────────────────────────────────────────────
     void onTogglePainelLateral(bool visivel);
     void onMudarAbaPainel(int index);
+    void executarComandoAba(int index);
+    void executarOcrPreemptivoPaginaAtual();
+    void onOcrPaginaCompletaResultado(int pagina, int largura, int altura, const QJsonArray &palavras, const QString &textoCompleto);
+    QString extrairTextoOcrDaRegiao(const QRect &rect, const QPolygonF &poligono, bool isLivre);
     void onSalvarLayout();
     void onRestaurarLayoutPadrao();
     void onAplicarProporcao(int leitorPercent);
@@ -149,8 +160,9 @@ private slots:
     void onAtualizarContadorNotas();
 
 private:
-    void setupMenuBar();
+    QMenuBar* setupMenuBar();
     void setupUi();
+    void registrarLancadorLinux();
     QWidget* criarBarraVisualizacao();
     QWidget* criarAbaTraducao();
     QWidget* criarAbaTutor();
@@ -215,9 +227,50 @@ private:
     // ── Layout e Divisor ──────────────────────────────────────────────────
     QSplitter       *m_splitter       = nullptr;
     QWidget         *m_painelEsq      = nullptr;
-    QFrame          *m_painelDir      = nullptr;
     QTabWidget      *m_tabWidget      = nullptr;
     QWidget         *m_barraVis       = nullptr;
+    TitleBar        *m_titleBar       = nullptr;
+    QMenuBar        *m_customMenuBar  = nullptr;
+
+    QWidget         *m_tabTraducao    = nullptr;
+    QWidget         *m_tabTutor       = nullptr;
+    QWidget         *m_tabChatIA      = nullptr;
+    QWidget         *m_tabAnotacoes   = nullptr;
+    QWidget         *m_tabConfiguracoes = nullptr;
+
+    FloatingHUD         *m_floatingHud        = nullptr;
+    QuickLookupPopover  *m_quickLookupPopover = nullptr;
+    QLabel              *m_badgeMetricasIA    = nullptr;
+    QElapsedTimer        m_timerRequisicaoIA;
+
+    // ── Estruturas e Cache para OCR Preemptivo em Segundo Plano ───────────
+    struct OcrPalavra {
+        QString texto;
+        QRect box;
+    };
+    struct CacheOcrPagina {
+        int pagina = -1;
+        int largura = 0;
+        int altura = 0;
+        QList<OcrPalavra> palavras;
+        QString textoCompleto;
+        QDateTime criadoEm;
+    };
+
+    QMap<int, CacheOcrPagina> m_cacheOcrPaginas;
+    QTimer                 *m_timerOcrPreemptivo = nullptr;
+    QTimer                 *m_timerLimpezaCacheOcr = nullptr;
+    int                     m_paginaAnteriorOcr = -1;
+
+    // ── Seleção Livre e Retangular ─────────────────────────────────────────
+    SelectionOverlayWidget *m_overlaySelecao = nullptr;
+    QComboBox              *m_comboFormatoSelecao = nullptr;
+
+    // ── Controle de Atalhos em Tela Cheia (1º toque: seleção/popover; 2º toque: painel)
+    int                     m_ultimoAtalhoTelaCheia = -1;
+    int                     m_contagemAtalhoTelaCheia = 0;
+    qint64                  m_tempoUltimoAtalhoTelaCheia = 0;
+    bool                    m_origemCapturaTelaCheiaFlutuante = false;
 
     // ── PDF ───────────────────────────────────────────────────────────────
     QPdfDocument    *m_pdfDoc         = nullptr;
@@ -252,11 +305,14 @@ private:
     QPushButton     *m_btnTelaCheia   = nullptr;
 
     // ── Aba 1: Tradução ───────────────────────────────────────────────────
-    QPushButton     *m_btnModoCaptura    = nullptr;
-    QPushButton     *m_btnTraduzir       = nullptr;
-    QPushButton     *m_btnCopiarTraducao = nullptr;
-    QCheckBox       *m_chkTraducaoAuto   = nullptr;
-    PromptInputWidget *m_promptTraducao  = nullptr;
+    QPushButton       *m_btnModoCaptura          = nullptr;
+    QPushButton       *m_btnTraduzir             = nullptr;
+    QPushButton       *m_btnCopiarTraducao       = nullptr;
+    QCheckBox         *m_chkTraducaoAuto         = nullptr;
+    QTextEdit         *m_txtTraducaoOriginalEn   = nullptr;
+    QPushButton       *m_btnRetraduzirTexto      = nullptr;
+    QTimer            *m_timerDebounceTraducaoAba = nullptr;
+    PromptInputWidget *m_promptTraducao          = nullptr;
 
     // ── Aba 2: Tutor & Pronúncia ──────────────────────────────────────────
     QComboBox       *m_comboVoz          = nullptr;

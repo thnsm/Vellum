@@ -24,6 +24,14 @@ set(SOURCES
     src/DependencyManager.cpp
     src/ThemeManager.cpp
     src/PromptInputWidget.cpp
+    src/TitleBar.h
+    src/TitleBar.cpp
+    src/FloatingHUD.h
+    src/FloatingHUD.cpp
+    src/QuickLookupPopover.h
+    src/QuickLookupPopover.cpp
+    src/SelectionOverlayWidget.h
+    src/SelectionOverlayWidget.cpp
     resources.qrc
 )
 
@@ -37,6 +45,10 @@ set(HEADERS
     src/DependencyManager.h
     src/ThemeManager.h
     src/PromptInputWidget.h
+    src/TitleBar.h
+    src/FloatingHUD.h
+    src/QuickLookupPopover.h
+    src/SelectionOverlayWidget.h
 )
 
 qt_add_executable(Vellum
@@ -59,11 +71,17 @@ set_target_properties(Vellum PROPERTIES
     OUTPUT_NAME "Vellum"
 )
 
-# Compatibilidade no Linux com scripts anteriores
+# Compatibilidade no Linux com scripts anteriores e registro no lançador do sistema
 if(UNIX AND NOT APPLE)
     add_custom_command(TARGET Vellum POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E create_symlink $<TARGET_FILE_NAME:Vellum> ${CMAKE_BINARY_DIR}/EnsinadorDeIngles
         COMMENT "Criando link simbolico de compatibilidade EnsinadorDeIngles -> Vellum"
+    )
+    add_custom_command(TARGET Vellum POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$ENV{HOME}/.local/share/applications"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/../instaladores_e_scripts/vellum.desktop" "$ENV{HOME}/.local/share/applications/vellum.desktop"
+        COMMAND update-desktop-database "$ENV{HOME}/.local/share/applications" || true
+        COMMENT "Instalando/atualizando o lancador Linux (~/.local/share/applications/vellum.desktop)"
     )
 endif()
 
@@ -106,3 +124,19 @@ target_link_libraries(tst_PromptInputWidget PRIVATE
 
 add_test(NAME tst_ThemeManager COMMAND tst_ThemeManager)
 add_test(NAME tst_PromptInputWidget COMMAND tst_PromptInputWidget)
+
+add_executable(tst_QuickLookupPopover
+    tests/tst_QuickLookupPopover.cpp
+    src/QuickLookupPopover.cpp
+    src/QuickLookupPopover.h
+    resources.qrc
+)
+
+target_link_libraries(tst_QuickLookupPopover PRIVATE
+    Qt6::Core
+    Qt6::Widgets
+    Qt6::Test
+)
+
+add_test(NAME tst_QuickLookupPopover COMMAND tst_QuickLookupPopover)
+

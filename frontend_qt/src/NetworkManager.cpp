@@ -419,3 +419,39 @@ void NetworkManager::enviarMensagemChat(const QString &mensagem,
     });
 }
 
+void NetworkManager::executarOcrPaginaCompleta(int pagina, const QByteArray &imagemBase64)
+{
+    const QString endpoint = "/ocr_pagina_completa";
+    emit requisicaoIniciada(endpoint);
+
+    QJsonObject body;
+    body["pagina"] = pagina;
+    body["imagem_base64"] = QString::fromLatin1(imagemBase64);
+    const QByteArray jsonBody = QJsonDocument(body).toJson(QJsonDocument::Compact);
+
+    auto *reply = postJson(endpoint, jsonBody);
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, endpoint, pagina]() {
+        emit requisicaoConcluida(endpoint);
+        reply->deleteLater();
+
+        if (reply->error() != QNetworkReply::NoError) {
+            emit erroRequisicao(endpoint, QStringLiteral("Erro no OCR preemptivo: %1").arg(reply->errorString()));
+            return;
+        }
+
+        const QByteArray resp = reply->readAll();
+        QJsonParseError parseErr;
+        const QJsonDocument doc = QJsonDocument::fromJson(resp, &parseErr);
+        if (parseErr.error == QJsonParseError::NoError && doc.isObject()) {
+            const QJsonObject root = doc.object();
+            const int pag = root["pagina"].toInt(pagina);
+            const int larg = root["largura"].toInt(0);
+            const int alt = root["altura"].toInt(0);
+            const QJsonArray palavras = root["palavras"].toArray();
+            const QString texto = root["texto_completo"].toString();
+            emit ocrPaginaCompletaResultado(pag, larg, alt, palavras, texto);
+        }
+    });
+}
+

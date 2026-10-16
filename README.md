@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="LOGO.png" alt="Vellum Logo" width="180"/>
+  <img src="frontend_qt/resources/LOGO.png" alt="Vellum Logo" width="180"/>
 </p>
 
 <p align="center">
@@ -27,9 +27,19 @@ O **Vellum** tem a filosofia de foco total no documento. A interface principal �
 
 ---
 
+## 📂 Estrutura de Pastas do Projeto
+
+*   **`frontend_qt/`**: Interface gráfica rápida em C++ e Qt6 (visualizador PDF, popovers flutuantes, abas, temas `.qss` e ícones).
+*   **`backend_python/`**: Motor de IA em Python/FastAPI (`main.py` e `requirements.txt` — OCR com Tesseract, tradução Gemini/Ollama, síntese de voz e avaliação de pronúncia com Whisper).
+*   **`instaladores_e_scripts/`**: Scripts prontos para instalar, desinstalar e empacotar o Vellum no Linux e no Windows.
+*   **`testes_e_benchmarks/`**: Testes automatizados do servidor e scripts de comparação de velocidade/qualidade entre modelos locais e nuvem.
+*   **`prototipos_antigos/`**: Primeiros scripts de terminal (`assistente.py`) que deram origem à ideia do projeto.
+
+---
+
 ## 🚀 Instalação e Configuração
 
-O aplicativo é divido em um Frontend de alta performance (C++/Qt6) e um Backend em Python responsável pelas integrações de IA e áudio.
+O aplicativo é dividido em um Frontend de alta performance (C++/Qt6) e um Backend em Python responsável pelas integrações de IA e áudio.
 
 ### 🐧 Linux (Ubuntu, Debian, Fedora, Arch)
 
@@ -53,11 +63,11 @@ Para compilar e instalar o Vellum de forma automática e criar um ícone no seu 
 
 **2. Clone o projeto e instale:**
 ```bash
-git clone https://github.com/LeinadSaia/Vellum.git Vellum
+git clone https://github.com/thnsm/Vellum.git Vellum
 cd Vellum
-./install_linux.sh
+./instaladores_e_scripts/install_linux.sh
 ```
-Após o script finalizar, o atalho do Vellum já estará no menu do seu sistema. Caso precise desinstalar, basta executar o `./uninstall_linux.sh`.
+Após o script finalizar, o atalho do Vellum já estará no menu do seu sistema. Caso precise desinstalar, basta executar `./instaladores_e_scripts/uninstall_linux.sh`.
 
 ---
 
@@ -65,10 +75,10 @@ Após o script finalizar, o atalho do Vellum já estará no menu do seu sistema.
 
 Você tem duas opções para rodar no Windows:
 
-*   **Download da Versão Pronta:** Baixe a versão mais recente na aba [Releases](https://github.com/LeinadSaia/Vellum/releases) do repositório. Existe uma versão portátil (em `.zip`, basta extrair e rodar o `Vellum.exe`) e um instalador executável padrão (`.exe`).
-*   **Compilar Manualmente:** Caso queira gerar o build no seu computador, abra um terminal e execute o script fornecido na raiz do projeto:
+*   **Download da Versão Pronta:** Baixe a versão mais recente na aba [Releases](https://github.com/thnsm/Vellum/releases) do repositório. Existe uma versão portátil (em `.zip`, basta extrair e rodar o `Vellum.exe`) e um instalador executável padrão (`.exe`).
+*   **Compilar Manualmente:** Caso queira gerar o build no seu computador, abra um terminal e execute o script fornecido:
     ```cmd
-    build_windows_release.bat
+    instaladores_e_scripts\build_windows_release.bat
     ```
     Isso compilará o C++ e empacotará o Python nativamente.
 

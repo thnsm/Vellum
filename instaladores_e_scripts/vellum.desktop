@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Vellum
+GenericName=Leitor Técnico & Tutor IA
+Comment=Leitor Técnico e Tutor de Inglês com Inteligência Artificial
+Exec=vellum %f
+Icon=vellum
+Terminal=false
+Categories=Office;Viewer;Education;Science;
+MimeType=application/pdf;
+StartupNotify=true
