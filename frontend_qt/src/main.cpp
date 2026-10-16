@@ -40,19 +40,24 @@ int main(int argc, char *argv[])
 
         splash.showMessage("Iniciando Motor de IA...", Qt::AlignBottom | Qt::AlignCenter, Qt::white);
 
-        QObject::connect(w, &MainWindow::backendPronto, [w, &splash]() {
+        auto exibirJanelaPrincipal = [w, &splash]() {
             if (splash.isVisible()) {
                 splash.finish(w);
-                w->show();
             }
-        });
+            if (!w->isVisible()) {
+                w->showMaximized();
+                w->raise();
+                w->activateWindow();
+            }
+        };
 
-        QTimer::singleShot(15000, [w, &splash]() {
+        QObject::connect(w, &MainWindow::backendPronto, exibirJanelaPrincipal);
+
+        QTimer::singleShot(15000, [w, &splash, exibirJanelaPrincipal]() {
             if (splash.isVisible()) {
                 splash.showMessage("Demorando mais que o esperado...", Qt::AlignBottom | Qt::AlignCenter, Qt::white);
-                splash.finish(w);
-                w->show();
             }
+            exibirJanelaPrincipal();
         });
     };
 

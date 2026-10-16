@@ -51,13 +51,14 @@ public:
 
     // Atualizações assíncronas do backend
     void atualizarResultadoTraducao(const QString &traducaoPt, const QString &modelo);
-    void atualizarResultadoTutor(int nota, const QString &feedback, const QString &textoFalado, const QStringList &ausentes);
+    void atualizarResultadoTutor(int nota, const QString &feedback, const QString &textoFalado, const QStringList &ausentes, const QString &htmlDestacado = QString());
     void atualizarRespostaChat(const QString &resposta, const QString &modelo);
     void setGravandoTutor(bool gravando);
 
 signals:
     void solicitarRetraducao(const QString &novoTextoEn);
     void ouvirPronunciaClicada(const QString &texto);
+    void pararAudioClicado();
     void gravarVozTutorClicada(const QString &textoEsperado);
     void enviarMensagemChatClicada(const QString &pergunta, const QString &imagemBase64);
     void salvarNotaNoPainelClicada(const QString &texto);
@@ -72,6 +73,8 @@ protected:
 private:
     void setupUi();
     void posicionarNaTela(const QPoint &posGlobal);
+    QRect obterGeometriaTelaUtil() const;
+    void aplicarGeometriaSegura(QRect novaGeom);
     BordaRedimensionamento detectarBorda(const QPoint &pos) const;
     void atualizarCursorBorda(BordaRedimensionamento borda);
 
@@ -79,11 +82,13 @@ private:
 
     // Movimentação & Redimensionamento
     bool                     m_dragging = false;
-    QPoint                   m_dragPos;
+    QPoint                   m_dragStartGlobalPos;
+    QPoint                   m_dragStartWidgetPos;
     bool                     m_resizing = false;
     BordaRedimensionamento   m_bordaAtiva = BordaRedimensionamento::Nenhuma;
     QRect                    m_resizeStartGeom;
     QPoint                   m_resizeStartPos;
+    QSizeGrip               *m_sizeGrip = nullptr;
 
     // Header compartilhado arrastável
     QWidget         *m_headerBar         = nullptr;
@@ -100,6 +105,7 @@ private:
     QTextBrowser    *m_txtTradTraduzido  = nullptr;
     QPushButton     *m_btnTradAtualizar  = nullptr;
     QPushButton     *m_btnTradOuvir      = nullptr;
+    QPushButton     *m_btnTradParar      = nullptr;
     QPushButton     *m_btnTradCopiar     = nullptr;
     QTimer          *m_timerDebounceTraducao = nullptr;
     bool             m_bloquearDebounce  = false;
@@ -110,7 +116,9 @@ private:
     // ── Página 1: Tutor de Fala ───────────────────────────────────────────
     QWidget         *m_pagTutor          = nullptr;
     QLabel          *m_lblTutorTexto     = nullptr;
+    QString          m_textoTutorEsperado;
     QPushButton     *m_btnTutorOuvir     = nullptr;
+    QPushButton     *m_btnTutorParar     = nullptr;
     QPushButton     *m_btnTutorGravar    = nullptr;
     QProgressBar    *m_barTutorAcuracia  = nullptr;
     QLabel          *m_lblTutorNota      = nullptr;

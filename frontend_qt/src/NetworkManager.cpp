@@ -159,32 +159,6 @@ void NetworkManager::processarImagemOcr(const QByteArray &imagemBase64, const QS
     });
 }
 
-void NetworkManager::gravarETranscrever()
-{
-    const QString endpoint = "/gravar_e_transcrever";
-    emit requisicaoIniciada(endpoint);
-
-    auto *reply = postJson(endpoint, QByteArrayLiteral("{}"));
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply, endpoint]() {
-        emit requisicaoConcluida(endpoint);
-        reply->deleteLater();
-
-        if (reply->error() != QNetworkReply::NoError) {
-            emit erroRequisicao(endpoint,
-                QStringLiteral("Erro na gravação: %1").arg(reply->errorString()));
-            return;
-        }
-
-        const QString texto = extrairCampoString(reply->readAll(), "texto_transcrito");
-        if (texto.isEmpty()) {
-            emit erroRequisicao(endpoint, "Whisper não detectou nenhuma fala.");
-            return;
-        }
-        emit transcricaoResultado(texto);
-    });
-}
-
 void NetworkManager::iniciarGravacao()
 {
     const QString endpoint = "/iniciar_gravacao";
@@ -205,9 +179,12 @@ void NetworkManager::iniciarGravacao()
     });
 }
 
-void NetworkManager::pararGravacao(const QString &idioma)
+void NetworkManager::pararGravacao(const QString &idioma, const QString &modeloWhisper)
 {
-    const QString endpoint = "/parar_gravacao?idioma=" + idioma;
+    QString endpoint = "/parar_gravacao?idioma=" + idioma;
+    if (!modeloWhisper.isEmpty()) {
+        endpoint += "&modelo_whisper=" + QString::fromLatin1(QUrl::toPercentEncoding(modeloWhisper));
+    }
     emit requisicaoIniciada(endpoint);
 
     auto *reply = postJson(endpoint, QByteArrayLiteral("{}"));
@@ -228,33 +205,6 @@ void NetworkManager::pararGravacao(const QString &idioma)
             return;
         }
         emit transcricaoResultado(texto);
-    });
-}
-
-void NetworkManager::avaliarTraducao(const QString &textoIngles, const QString &textoPortugues)
-{
-    const QString endpoint = "/avaliar_traducao";
-    emit requisicaoIniciada(endpoint);
-
-    QJsonObject body;
-    body["texto_ingles"]    = textoIngles;
-    body["texto_portugues"] = textoPortugues;
-    const QByteArray jsonBody = QJsonDocument(body).toJson(QJsonDocument::Compact);
-
-    auto *reply = postJson(endpoint, jsonBody);
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply, endpoint]() {
-        emit requisicaoConcluida(endpoint);
-        reply->deleteLater();
-
-        if (reply->error() != QNetworkReply::NoError) {
-            emit erroRequisicao(endpoint,
-                QStringLiteral("Erro na avaliação: %1").arg(reply->errorString()));
-            return;
-        }
-
-        const int nota = extrairCampoInt(reply->readAll(), "nota", -1);
-        emit avaliacaoResultado(nota);
     });
 }
 
@@ -362,8 +312,9 @@ void NetworkManager::avaliarPronuncia(const QString &textoEsperado, const QStrin
         const QString feedback = extrairCampoString(resp, "feedback");
         const QString falado = extrairCampoString(resp, "texto_falado");
         const QStringList ausentes = extrairCampoListaString(resp, "palavras_ausentes");
+        const QString htmlDestacado = extrairCampoString(resp, "html_destacado");
 
-        emit avaliacaoPronunciaResultado(nota, feedback, falado, ausentes);
+        emit avaliacaoPronunciaResultado(nota, feedback, falado, ausentes, htmlDestacado);
     });
 }
 

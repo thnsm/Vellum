@@ -30,12 +30,6 @@ public:
     /** POST /limpar_ocr (imagem base64) */
     void processarImagemOcr(const QByteArray &imagemBase64, const QString &apiKey = QString());
 
-    /** POST /gravar_e_transcrever (legado) */
-    void gravarETranscrever();
-
-    /** POST /avaliar_traducao */
-    void avaliarTraducao(const QString &textoIngles, const QString &textoPortugues);
-
     /** GET / (health check) */
     void verificarConexao();
 
@@ -46,7 +40,7 @@ public:
     void iniciarGravacao();
 
     /** POST /parar_gravacao */
-    void pararGravacao(const QString &idioma = "en");
+    void pararGravacao(const QString &idioma = "en", const QString &modeloWhisper = QString());
 
     /** POST /traduzir */
     void traduzirDireto(const QString &textoIngles = QString(), const QByteArray &imagemBase64 = QByteArray(), const QString &apiKey = QString(), const QString &modelo = QString());
@@ -76,14 +70,13 @@ signals:
     void traducaoDiretaResultado(const QString &textoIngles, const QString &traducaoPortugues, const QString &modeloUsado = QString());
     void limparOcrResultado(const QString &textoPronto);
     void transcricaoResultado(const QString &textoTranscrito);
-    void avaliacaoResultado(int nota);
     void servidorOnline(bool online);
     void modelosStatusRecebido(bool ollamaOnline, bool temPhi3, bool temLlama32, bool temLlama3);
     void gravacaoIniciada();
 
     /** TTS e Tutor */
     void falaIniciada(const QString &voz);
-    void avaliacaoPronunciaResultado(int nota, const QString &feedback, const QString &textoFalado, const QStringList &palavrasAusentes);
+    void avaliacaoPronunciaResultado(int nota, const QString &feedback, const QString &textoFalado, const QStringList &palavrasAusentes, const QString &htmlDestacado = QString());
 
     /** Chat IA */
     void chatRespostaResultado(const QString &resposta, const QString &provedorUsado, const QString &modeloUsado);

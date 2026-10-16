@@ -9,4 +9,6 @@ Icon=vellum
 Terminal=false
 Categories=Office;Viewer;Education;Science;
 MimeType=application/pdf;
+StartupWMClass=Vellum
 StartupNotify=true
+Keywords=PDF;Reader;Technical;English;Translator;Ollama;Gemini;

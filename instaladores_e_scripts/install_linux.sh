@@ -33,7 +33,7 @@ echo "Executável: ${BIN_DIR}/vellum"
 echo ""
 
 # 1. Compilação do Frontend se necessário
-if [ ! -f "build_linux/Vellum" ] && [ ! -f "Vellum" ]; then
+if [ ! -f "frontend_qt/build/Vellum" ] && [ ! -f "build_linux/Vellum" ] && [ ! -f "Vellum" ]; then
     echo "[1/5] Compilando Frontend C++ (Qt6)..."
     if ! command -v cmake >/dev/null 2>&1; then
         echo -e "\n[ERRO] O comando 'cmake' não foi encontrado."
@@ -52,15 +52,15 @@ if [ ! -f "build_linux/Vellum" ] && [ ! -f "Vellum" ]; then
         exit 1
     fi
 
-    cmake -B build_linux -S frontend_qt -DCMAKE_BUILD_TYPE=Release
-    cmake --build build_linux -j"$(nproc)"
+    cmake -B frontend_qt/build -S frontend_qt -DCMAKE_BUILD_TYPE=Release
+    cmake --build frontend_qt/build -j"$(nproc)"
 else
     echo "[1/5] Frontend compilado detectado."
 fi
 
 # 2. Configuração do ambiente Python
 echo "[2/5] Verificando dependências do backend..."
-if [ ! -d "venv" ] && [ ! -f "vellum_backend" ] && [ ! -f "dist/vellum_backend" ]; then
+if [ ! -d "venv" ] && [ ! -d "${OPT_DIR}/venv" ] && [ ! -f "vellum_backend" ] && [ ! -f "dist/vellum_backend" ]; then
     echo "      Criando ambiente virtual Python..."
     python3 -m venv venv
     ./venv/bin/pip install --upgrade pip
@@ -74,24 +74,34 @@ echo "[3/5] Copiando arquivos do aplicativo..."
 mkdir -p "${BIN_DIR}" "${OPT_DIR}" "${APP_DIR}" "${ICON_DIR}"
 
 # Copia arquivos essenciais para ~/.local/share/vellum
-cp "build_linux/Vellum" "${OPT_DIR}/Vellum" 2>/dev/null || cp "Vellum" "${OPT_DIR}/Vellum"
-if [ -f "vellum_backend" ]; then
-    cp "vellum_backend" "${OPT_DIR}/vellum_backend"
-elif [ -f "dist/vellum_backend" ]; then
-    cp "dist/vellum_backend" "${OPT_DIR}/vellum_backend"
+if [ -f "frontend_qt/build/Vellum" ]; then
+    cp -f "frontend_qt/build/Vellum" "${OPT_DIR}/Vellum"
+elif [ -f "build_linux/Vellum" ]; then
+    cp -f "build_linux/Vellum" "${OPT_DIR}/Vellum"
 else
-    cp "backend_python/main.py" "${OPT_DIR}/main.py"
-    cp "backend_python/requirements.txt" "${OPT_DIR}/requirements.txt"
-    cp -r "venv" "${OPT_DIR}/" 2>/dev/null || true
+    cp -f "Vellum" "${OPT_DIR}/Vellum"
+fi
+chmod +x "${OPT_DIR}/Vellum"
+
+if [ -f "vellum_backend" ]; then
+    cp -f "vellum_backend" "${OPT_DIR}/vellum_backend"
+elif [ -f "dist/vellum_backend" ]; then
+    cp -f "dist/vellum_backend" "${OPT_DIR}/vellum_backend"
+else
+    cp -f "backend_python/main.py" "${OPT_DIR}/main.py"
+    cp -f "backend_python/requirements.txt" "${OPT_DIR}/requirements.txt"
+    if [ -d "venv" ]; then
+        cp -r "venv" "${OPT_DIR}/" 2>/dev/null || true
+    fi
 fi
 
 # Copia ícone oficial
 if [ -f "frontend_qt/resources/app_icon.png" ]; then
-    cp "frontend_qt/resources/app_icon.png" "${ICON_DIR}/vellum.png"
+    cp -f "frontend_qt/resources/app_icon.png" "${ICON_DIR}/vellum.png"
 elif [ -f "frontend_qt/resources/LOGO.png" ]; then
-    cp "frontend_qt/resources/LOGO.png" "${ICON_DIR}/vellum.png"
+    cp -f "frontend_qt/resources/LOGO.png" "${ICON_DIR}/vellum.png"
 elif [ -f "vellum.png" ]; then
-    cp "vellum.png" "${ICON_DIR}/vellum.png"
+    cp -f "vellum.png" "${ICON_DIR}/vellum.png"
 fi
 
 # 4. Criação do script launcher no ~/.local/bin/vellum
@@ -114,13 +124,15 @@ Name=Vellum
 GenericName=Leitor Técnico e Tutor de Inglês
 Comment=Leitor Técnico de PDF e Tutor Inteligente com IA
 Exec=${BIN_DIR}/vellum %f
-Icon=vellum
+Icon=${ICON_DIR}/vellum.png
 Terminal=false
 MimeType=application/pdf;
 Categories=Office;Education;Science;Viewer;
 StartupWMClass=Vellum
+StartupNotify=true
 Keywords=PDF;Reader;Technical;English;Translator;Ollama;Gemini;
 EOF
+chmod +x "${APP_DIR}/vellum.desktop"
 
 # Atualiza bancos de dados do sistema se disponíveis
 if command -v update-desktop-database >/dev/null 2>&1; then

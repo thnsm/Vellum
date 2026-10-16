@@ -8,15 +8,13 @@ class ThemeManager : public QObject {
     Q_OBJECT
 public:
     enum class Theme {
-        Light,
-        Dark,
-        System
+        Dark
     };
 
     explicit ThemeManager(QObject* parent = nullptr);
 
-    // Carrega o tema selecionado
-    bool applyTheme(Theme theme);
+    // Carrega o tema escuro padrão do Vellum
+    bool applyTheme(Theme theme = Theme::Dark);
 
     // Retorna o tema atual
     Theme currentTheme() const;
@@ -25,7 +23,7 @@ signals:
     void themeChanged(Theme newTheme);
 
 private:
-    Theme m_currentTheme = Theme::System;
+    Theme m_currentTheme = Theme::Dark;
     bool loadQssFile(const QString& filePath);
 };
 

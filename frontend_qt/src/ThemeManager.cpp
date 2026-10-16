@@ -2,37 +2,15 @@
 #include <QApplication>
 #include <QFile>
 #include <QTextStream>
-#include <QStyleHints>
-#include <QGuiApplication>
 #include <QDebug>
 
 ThemeManager::ThemeManager(QObject* parent) : QObject(parent) {
-    // Escutar mudanças de tema do sistema operacional se necessário
-    connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged, this, [this](Qt::ColorScheme colorScheme) {
-        if (m_currentTheme == Theme::System) {
-            applyTheme(Theme::System); // Reaplica o tema correto baseado no sistema
-        }
-    });
 }
 
 bool ThemeManager::applyTheme(Theme theme) {
     m_currentTheme = theme;
-    Theme effectiveTheme = theme;
-
-    if (effectiveTheme == Theme::System) {
-        if (QGuiApplication::styleHints()->colorScheme() == Qt::ColorScheme::Dark) {
-            effectiveTheme = Theme::Dark;
-        } else {
-            effectiveTheme = Theme::Light;
-        }
-    }
-
-    QString qssPath = (effectiveTheme == Theme::Dark) 
-                      ? ":/themes/dark.qss" 
-                      : ":/themes/light.qss";
-
-    if (loadQssFile(qssPath)) {
-        emit themeChanged(theme);
+    if (loadQssFile(":/themes/dark.qss")) {
+        emit themeChanged(m_currentTheme);
         return true;
     }
     return false;

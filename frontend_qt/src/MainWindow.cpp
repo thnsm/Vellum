@@ -6,6 +6,11 @@
 #include "FloatingHUD.h"
 #include "QuickLookupPopover.h"
 #include "SelectionOverlayWidget.h"
+#include "TranslationWidget.h"
+#include "SpeechTutorWidget.h"
+#include "AiAssistantWidget.h"
+#include "NotesWidget.h"
+#include "SettingsWidget.h"
 
 #include <QApplication>
 #include <QFileDialog>
@@ -85,10 +90,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     setAcceptDrops(true);
 
-    // Garante tela cheia e painel fechado sempre ao abrir
-    showMaximized();
-    raise();
-    activateWindow();
+    // Garante painel fechado por padrão ao iniciar
     m_tabWidget->setVisible(false);
     m_actTogglePainel->setChecked(false);
 
@@ -379,11 +381,11 @@ void MainWindow::setupUi()
     m_splitter->addWidget(m_painelEsq);
 
     // ── Painel Direito: QTabWidget de ferramentas sob demanda ────────────
-    m_tabTraducao = criarAbaTraducao();
-    m_tabTutor = criarAbaTutor();
-    m_tabChatIA = criarAbaChatIA();
-    m_tabAnotacoes = criarAbaAnotacoes();
-    m_tabConfiguracoes = criarAbaConfiguracoes();
+    m_tabTraducao = new TranslationWidget(this);
+    m_tabTutor = new SpeechTutorWidget(this);
+    m_tabChatIA = new AiAssistantWidget(this);
+    m_tabAnotacoes = new NotesWidget(this);
+    m_tabConfiguracoes = new SettingsWidget(this);
 
     m_tabWidget = new QTabWidget(this);
     m_tabWidget->setObjectName("tabWidgetPrincipal");
@@ -423,28 +425,30 @@ void MainWindow::setupUi()
     m_quickLookupPopover->hide();
 
     connect(m_quickLookupPopover, &QuickLookupPopover::solicitarRetraducao, this, [this](const QString &novoTextoEn) {
-        if (m_net && !novoTextoEn.isEmpty()) {
+        if (!novoTextoEn.isEmpty()) {
             m_textoOriginalEn = novoTextoEn;
-            if (m_txtTraducaoOriginalEn) {
-                m_txtTraducaoOriginalEn->blockSignals(true);
-                m_txtTraducaoOriginalEn->setPlainText(novoTextoEn);
-                m_txtTraducaoOriginalEn->blockSignals(false);
+            if (m_tabTraducao) {
+                m_tabTraducao->setOriginalTextSilent(novoTextoEn);
             }
-            m_net->traduzirDireto(novoTextoEn);
+            dispararTraducaoTexto(novoTextoEn);
         }
     });
 
     connect(m_quickLookupPopover, &QuickLookupPopover::ouvirPronunciaClicada, this, [this](const QString &texto) {
         if (m_net && !texto.isEmpty()) {
-            m_net->falarTexto(texto, "en-US-JennyNeural", "+0%");
+            const QString voz = (m_tabTutor && m_tabTutor->comboVoz()) ? m_tabTutor->comboVoz()->currentData().toString() : QStringLiteral("en-US-JennyNeural");
+            const QString vel = (m_tabTutor && m_tabTutor->comboVelocidade()) ? m_tabTutor->comboVelocidade()->currentData().toString() : QStringLiteral("+0%");
+            m_net->falarTexto(texto, voz, vel);
         }
     });
+
+    connect(m_quickLookupPopover, &QuickLookupPopover::pararAudioClicado, this, &MainWindow::onPararAudio);
 
     connect(m_quickLookupPopover, &QuickLookupPopover::gravarVozTutorClicada, this, [this](const QString &textoEsperado) {
         if (!textoEsperado.isEmpty()) {
             m_textoOriginalEn = textoEsperado;
-            if (m_promptTextoTutor) {
-                m_promptTextoTutor->setText(textoEsperado);
+            if (m_tabTutor && m_tabTutor->promptTextoTutor()) {
+                m_tabTutor->promptTextoTutor()->setText(textoEsperado);
             }
         }
         onGravarVozTutor();
@@ -452,7 +456,7 @@ void MainWindow::setupUi()
 
     connect(m_quickLookupPopover, &QuickLookupPopover::enviarMensagemChatClicada, this, [this](const QString &pergunta, const QString &imagemB64) {
         if (m_net) {
-            const int tierIdx = m_comboPerfil ? m_comboPerfil->currentIndex() : 0;
+            const int tierIdx = (m_tabConfiguracoes && m_tabConfiguracoes->comboPerfil()) ? m_tabConfiguracoes->comboPerfil()->currentIndex() : 0;
             QString apiKey = (tierIdx == 0) ? m_iaApiKey.trimmed() : QString();
             QString modelo = (tierIdx == 0) ? m_iaModelo.trimmed() : (tierIdx == 1 ? "phi3:mini" : (tierIdx == 2 ? "llama3.2:3b" : "llama3"));
             m_net->enviarMensagemChat(pergunta, imagemB64, m_chatHistoricoJson, m_iaProvedor, apiKey, modelo);
@@ -460,8 +464,8 @@ void MainWindow::setupUi()
     });
 
     connect(m_quickLookupPopover, &QuickLookupPopover::salvarNotaNoPainelClicada, this, [this](const QString &texto) {
-        if (m_txtAnotacoes && !texto.isEmpty()) {
-            m_txtAnotacoes->append("\n--- Anotação Rápida ---\n" + texto);
+        if (m_tabAnotacoes && !texto.isEmpty()) {
+            m_tabAnotacoes->appendQuickNote(texto);
             appendLog("Anotação sincronizada com o Bloco de Notas principal.", "success");
         }
     });
@@ -469,18 +473,22 @@ void MainWindow::setupUi()
     connect(m_quickLookupPopover, &QuickLookupPopover::expandirNoPainelClicado, this, [this](int modoIndex, const QString &d1, const QString &d2) {
         abrirOuAtivarAba(modoIndex);
         if (modoIndex == 0) {
-            if (m_txtTraducaoOriginalEn && !d1.isEmpty()) {
-                m_txtTraducaoOriginalEn->blockSignals(true);
-                m_txtTraducaoOriginalEn->setPlainText(d1);
-                m_txtTraducaoOriginalEn->blockSignals(false);
+            if (m_tabTraducao && !d1.isEmpty()) {
+                m_tabTraducao->setOriginalTextSilent(d1);
             }
         } else if (modoIndex == 1) {
-            if (m_promptTextoTutor && !d1.isEmpty()) m_promptTextoTutor->setText(d1);
+            if (m_tabTutor && m_tabTutor->promptTextoTutor() && !d1.isEmpty()) {
+                m_tabTutor->promptTextoTutor()->setText(d1);
+            }
         } else if (modoIndex == 2) {
-            if (m_promptInput && !d1.isEmpty()) m_promptInput->setText(d1);
-            if (!d2.isEmpty() && m_promptInput) m_promptInput->showImagePreview(d2, "Circuito");
+            if (m_tabChatIA && m_tabChatIA->promptInput()) {
+                if (!d1.isEmpty()) m_tabChatIA->promptInput()->setText(d1);
+                if (!d2.isEmpty()) m_tabChatIA->promptInput()->showImagePreview(d2, "Circuito");
+            }
         } else if (modoIndex == 3) {
-            if (m_txtAnotacoes && !d1.isEmpty()) m_txtAnotacoes->setText(d1);
+            if (m_tabAnotacoes && !d1.isEmpty()) {
+                m_tabAnotacoes->setText(d1);
+            }
         }
     });
 
@@ -500,497 +508,6 @@ void MainWindow::setupUi()
     m_badgeMetricasIA = new QLabel("IA: Pronta", bar);
     m_badgeMetricasIA->setObjectName("badgeMetricasIA");
     bar->addPermanentWidget(m_badgeMetricasIA);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Aba 1: Tradução Direta
-// ─────────────────────────────────────────────────────────────────────────────
-
-QWidget* MainWindow::criarAbaTraducao()
-{
-    auto *aba = new QWidget();
-    auto *layout = new QVBoxLayout(aba);
-    layout->setContentsMargins(4, 8, 4, 4);
-    layout->setSpacing(8);
-
-    auto *layoutTop = new QHBoxLayout();
-    layoutTop->setSpacing(6);
-
-    m_btnModoCaptura = new QPushButton("Modo Seleção", aba);
-    m_btnModoCaptura->setObjectName("btnCaptura");
-    m_btnModoCaptura->setCheckable(true);
-    layoutTop->addWidget(m_btnModoCaptura);
-
-    m_comboFormatoSelecao = new QComboBox(aba);
-    m_comboFormatoSelecao->setObjectName("comboFormatoSelecao");
-    m_comboFormatoSelecao->addItem("Retângulo", static_cast<int>(SelectionOverlayWidget::Formato::Retangular));
-    m_comboFormatoSelecao->addItem("Formato Livre", static_cast<int>(SelectionOverlayWidget::Formato::Livre));
-    m_comboFormatoSelecao->setToolTip("Formato de captura: Retângulo padrão ou Desenho Livre com o mouse");
-    connect(m_comboFormatoSelecao, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
-        if (m_overlaySelecao) {
-            m_overlaySelecao->setFormato(idx == 0 ? SelectionOverlayWidget::Formato::Retangular : SelectionOverlayWidget::Formato::Livre);
-        }
-    });
-    layoutTop->addWidget(m_comboFormatoSelecao);
-
-    m_btnTraduzir = new QPushButton("Traduzir Seleção", aba);
-    m_btnTraduzir->setObjectName("btnTraduzir");
-    m_btnTraduzir->setEnabled(false);
-    layoutTop->addWidget(m_btnTraduzir);
-
-    layout->addLayout(layoutTop);
-
-    m_chkTraducaoAuto = new QCheckBox("Traduzir automaticamente ao selecionar na tela", aba);
-    m_chkTraducaoAuto->setObjectName("chkAuto");
-    m_chkTraducaoAuto->setChecked(true);
-    layout->addWidget(m_chkTraducaoAuto);
-
-    auto *lblOrig = new QLabel("Texto Original em Inglês (Editável)", aba);
-    lblOrig->setObjectName("lblSecao");
-    layout->addWidget(lblOrig);
-
-    m_txtTraducaoOriginalEn = new QTextEdit(aba);
-    m_txtTraducaoOriginalEn->setObjectName("txtTraducaoOriginalEn");
-    m_txtTraducaoOriginalEn->setPlaceholderText("Selecione um parágrafo no documento ou digite/edite o texto em inglês aqui...");
-    m_txtTraducaoOriginalEn->setFixedHeight(80);
-    layout->addWidget(m_txtTraducaoOriginalEn);
-
-    auto *layoutAcoesTrad = new QHBoxLayout();
-    m_btnRetraduzirTexto = new QPushButton("Traduzir Texto Modificado", aba);
-    m_btnRetraduzirTexto->setObjectName("btnTraduzir");
-    m_btnRetraduzirTexto->setCursor(Qt::PointingHandCursor);
-    layoutAcoesTrad->addWidget(m_btnRetraduzirTexto);
-    layoutAcoesTrad->addStretch();
-    layout->addLayout(layoutAcoesTrad);
-
-    m_timerDebounceTraducaoAba = new QTimer(this);
-    m_timerDebounceTraducaoAba->setSingleShot(true);
-    m_timerDebounceTraducaoAba->setInterval(700);
-
-    auto dispararRetraducaoAba = [this]() {
-        if (!m_txtTraducaoOriginalEn || !m_net) return;
-        const QString txt = m_txtTraducaoOriginalEn->toPlainText().trimmed();
-        if (!txt.isEmpty() && txt != m_textoOriginalEn) {
-            m_textoOriginalEn = txt;
-            m_net->traduzirDireto(txt);
-        }
-    };
-    connect(m_timerDebounceTraducaoAba, &QTimer::timeout, this, dispararRetraducaoAba);
-    connect(m_btnRetraduzirTexto, &QPushButton::clicked, this, dispararRetraducaoAba);
-
-    auto *lblTrad = new QLabel("Tradução Técnica (PT-BR)", aba);
-    lblTrad->setObjectName("lblSecao");
-    layout->addWidget(lblTrad);
-
-    m_promptTraducao = new PromptInputWidget(aba);
-    m_promptTraducao->setToolbarVisible(false);
-    m_promptTraducao->setReadOnly(true);
-    m_promptTraducao->setObjectName("promptTraducao");
-    m_promptTraducao->setPlaceholderText("A tradução técnica em português aparecerá aqui...");
-    layout->addWidget(m_promptTraducao, 1);
-
-    auto *layoutBottom = new QHBoxLayout();
-    m_btnCopiarTraducao = new QPushButton("Copiar Tradução", aba);
-    m_btnCopiarTraducao->setObjectName("btnSecundario");
-    layoutBottom->addWidget(m_btnCopiarTraducao);
-    layoutBottom->addStretch();
-
-    layout->addLayout(layoutBottom);
-    return aba;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Aba 2: Tutor & Pronúncia
-// ─────────────────────────────────────────────────────────────────────────────
-
-QWidget* MainWindow::criarAbaTutor()
-{
-    auto *aba = new QWidget();
-    auto *layout = new QVBoxLayout(aba);
-    layout->setContentsMargins(4, 8, 4, 4);
-    layout->setSpacing(8);
-
-    auto *layoutVozVel = new QHBoxLayout();
-    layoutVozVel->setSpacing(6);
-
-    auto *boxVoz = new QVBoxLayout();
-    auto *lblVoz = new QLabel("Voz do Tutor:", aba);
-    lblVoz->setObjectName("lblSecao");
-    m_comboVoz = new QComboBox(aba);
-    m_comboVoz->setObjectName("comboVoz");
-    m_comboVoz->addItem("US Jenny (Feminina)", "en-US-JennyNeural");
-    m_comboVoz->addItem("US Guy (Masculina)", "en-US-GuyNeural");
-    m_comboVoz->addItem("UK Sonia (Feminina)", "en-GB-SoniaNeural");
-    m_comboVoz->addItem("UK Ryan (Masculina)", "en-GB-RyanNeural");
-    m_comboVoz->addItem("AU Natasha (Feminina)", "en-AU-NatashaNeural");
-    boxVoz->addWidget(lblVoz);
-    boxVoz->addWidget(m_comboVoz);
-
-    auto *boxVel = new QVBoxLayout();
-    auto *lblVel = new QLabel("Velocidade:", aba);
-    lblVel->setObjectName("lblSecao");
-    m_comboVelocidade = new QComboBox(aba);
-    m_comboVelocidade->setObjectName("comboVelocidade");
-    m_comboVelocidade->addItem("0.75x (Lenta)", "-25%");
-    m_comboVelocidade->addItem("1.0x (Normal)", "+0%");
-    m_comboVelocidade->addItem("1.25x (Rápida)", "+25%");
-    m_comboVelocidade->addItem("1.5x (Avançada)", "+50%");
-    m_comboVelocidade->setCurrentIndex(1);
-    boxVel->addWidget(lblVel);
-    boxVel->addWidget(m_comboVelocidade);
-
-    layoutVozVel->addLayout(boxVoz, 65);
-    layoutVozVel->addLayout(boxVel, 35);
-    layout->addLayout(layoutVozVel);
-
-    auto *lblNivel = new QLabel("Nível de Exigência do Tutor:", aba);
-    lblNivel->setObjectName("lblSecao");
-    layout->addWidget(lblNivel);
-
-    m_comboNivelTutor = new QComboBox(aba);
-    m_comboNivelTutor->setObjectName("comboNivelTutor");
-    m_comboNivelTutor->addItem("Iniciante (Flexível & Encorajador)", "iniciante");
-    m_comboNivelTutor->addItem("Intermediário (Equilibrado)", "intermediario");
-    m_comboNivelTutor->addItem("Avançado (Exigente / Rigor Técnico)", "avancado");
-    m_comboNivelTutor->setCurrentIndex(1);
-    layout->addWidget(m_comboNivelTutor);
-
-    auto *lblTextoPratica = new QLabel("Texto para Prática:", aba);
-    lblTextoPratica->setObjectName("lblSecao");
-    layout->addWidget(lblTextoPratica);
-
-    m_promptTextoTutor = new PromptInputWidget(aba);
-    m_promptTextoTutor->setToolbarVisible(false);
-    m_promptTextoTutor->setObjectName("promptTextoTutor");
-    m_promptTextoTutor->setPlaceholderText("O texto selecionado no PDF aparecerá aqui. Você também pode digitar ou colar o texto em inglês que deseja praticar.");
-    layout->addWidget(m_promptTextoTutor, 1);
-
-    auto *layoutBotoes = new QHBoxLayout();
-    layoutBotoes->setSpacing(6);
-
-    m_btnOuvir = new QPushButton("Ouvir Pronúncia", aba);
-    m_btnOuvir->setObjectName("btnSecundario");
-    m_btnOuvir->setEnabled(false);
-    layoutBotoes->addWidget(m_btnOuvir);
-
-    m_btnPararAudio = new QPushButton("Parar Fala", aba);
-    m_btnPararAudio->setObjectName("btnSecundario");
-    layoutBotoes->addWidget(m_btnPararAudio);
-
-    m_btnGravar = new QPushButton("Gravar Minha Voz", aba);
-    m_btnGravar->setObjectName("btnGravar");
-    m_btnGravar->setEnabled(false);
-    layoutBotoes->addWidget(m_btnGravar);
-
-    layout->addLayout(layoutBotoes);
-
-    auto *lblAcuraciaTitulo = new QLabel("Acurácia da Pronúncia:", aba);
-    lblAcuraciaTitulo->setObjectName("lblSecao");
-    layout->addWidget(lblAcuraciaTitulo);
-
-    m_barAcuracia = new QProgressBar(aba);
-    m_barAcuracia->setObjectName("barAcuracia");
-    m_barAcuracia->setRange(0, 100);
-    m_barAcuracia->setValue(0);
-    m_barAcuracia->setTextVisible(true);
-    m_barAcuracia->setFormat("%p%");
-    layout->addWidget(m_barAcuracia);
-
-    auto *lblFeedback = new QLabel("Feedback:", aba);
-    lblFeedback->setObjectName("lblSecao");
-    layout->addWidget(lblFeedback);
-
-    m_txtFeedbackTutor = new QTextEdit(aba);
-    m_txtFeedbackTutor->setObjectName("txtFeedback");
-    m_txtFeedbackTutor->setReadOnly(true);
-    m_txtFeedbackTutor->setPlaceholderText("Grave sua leitura do texto selecionado para receber análise de pronúncia e dicas fonéticas do tutor.");
-    layout->addWidget(m_txtFeedbackTutor, 1);
-
-    return aba;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Aba 3: Assistente IA & Chat Técnico Multimodal
-// ─────────────────────────────────────────────────────────────────────────────
-
-QWidget* MainWindow::criarAbaChatIA()
-{
-    auto *aba = new QWidget();
-    auto *layout = new QVBoxLayout(aba);
-    layout->setContentsMargins(4, 8, 4, 4);
-    layout->setSpacing(6);
-
-    // Barra Superior: seletor de IA + status + botoes
-    auto *layoutHeader = new QHBoxLayout();
-    layoutHeader->setSpacing(6);
-
-    // Seletor rapido de IA (como o Antigravity)
-    m_comboChatIA = new QComboBox(aba);
-    m_comboChatIA->setObjectName("comboChatIA");
-    m_comboChatIA->setToolTip("Selecionar IA para responder");
-    m_comboChatIA->addItem("Gemini",  "gemini");
-    m_comboChatIA->addItem("Ollama",  "ollama");
-    layoutHeader->addWidget(m_comboChatIA);
-
-    // Label mostra o modelo do provedor selecionado (atualizado depois no carregarConfiguracoes)
-    m_lblModeloAtivoChat = new QLabel(QStringLiteral("—"), aba);
-    m_lblModeloAtivoChat->setObjectName("lblModeloAtivoChat");
-    layoutHeader->addWidget(m_lblModeloAtivoChat, 1);
-
-    m_btnConfigurarIA = new QPushButton("Configurar API", aba);
-    m_btnConfigurarIA->setObjectName("btnSecundario");
-    m_btnConfigurarIA->setToolTip("Configurar chave da API Gemini ou ativar modo offline");
-    layoutHeader->addWidget(m_btnConfigurarIA);
-
-    m_btnLimparChat = new QPushButton("Limpar", aba);
-    m_btnLimparChat->setObjectName("btnSecundario");
-    m_btnLimparChat->setToolTip("Limpar historico de conversa");
-    layoutHeader->addWidget(m_btnLimparChat);
-
-    layout->addLayout(layoutHeader);
-
-    // Historico da Conversa
-    m_chatHistorico = new QTextBrowser(aba);
-    m_chatHistorico->setObjectName("chatHistorico");
-    m_chatHistorico->setOpenExternalLinks(true);
-    m_chatHistorico->setHtml(
-        "<div style='color: #94a3b8; font-size: 13px; line-height: 1.5;'>"
-        "<b style='color: #60a5fa;'>Assistente Tecnico</b><br>"
-        "Faca perguntas conceituais ou anexe circuitos para analise da IA.<br><br>"
-        "<b>Instrucoes:</b><br>"
-        "• <b>Capturar Circuito:</b> Selecione um esquema diretamente no PDF com o mouse.<br>"
-        "• <b>Colar Trecho:</b> Insere o texto selecionado na pergunta.<br>"
-        "• <b>Configurar API:</b> Insira sua chave Gemini ou ative o modo offline (Ollama)."
-        "</div>"
-    );
-    layout->addWidget(m_chatHistorico, 1);
-
-    m_promptInput = new PromptInputWidget(aba);
-    layout->addWidget(m_promptInput);
-
-    return aba;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Aba 4: Bloco de Notas / Anotações
-// ─────────────────────────────────────────────────────────────────────────────
-
-QWidget* MainWindow::criarAbaAnotacoes()
-{
-    auto *aba = new QWidget();
-    auto *layout = new QVBoxLayout(aba);
-    layout->setContentsMargins(4, 8, 4, 4);
-    layout->setSpacing(6);
-
-    // Barra 1: Arquivo e Ações
-    auto *layoutAcoes = new QHBoxLayout();
-    layoutAcoes->setSpacing(6);
-
-    m_btnNovoNota = new QPushButton("Novo", aba);
-    m_btnNovoNota->setObjectName("btnSecundario");
-    m_btnNovoNota->setToolTip("Iniciar um novo bloco de anotações em branco");
-    layoutAcoes->addWidget(m_btnNovoNota);
-
-    m_btnAbrirNota = new QPushButton("Abrir...", aba);
-    m_btnAbrirNota->setObjectName("btnSecundario");
-    m_btnAbrirNota->setToolTip("Abrir anotações salvas anteriormente (.html ou .txt)");
-    layoutAcoes->addWidget(m_btnAbrirNota);
-
-    m_btnSalvarNota = new QPushButton("Salvar...", aba);
-    m_btnSalvarNota->setObjectName("btnPrimario");
-    m_btnSalvarNota->setToolTip("Salvar anotações atuais em disco");
-    layoutAcoes->addWidget(m_btnSalvarNota);
-
-    m_btnCopiarNota = new QPushButton("Copiar Tudo", aba);
-    m_btnCopiarNota->setObjectName("btnSecundario");
-    m_btnCopiarNota->setToolTip("Copiar todas as anotações para a área de transferência");
-    layoutAcoes->addWidget(m_btnCopiarNota);
-
-    layoutAcoes->addStretch();
-
-    m_lblArquivoNota = new QLabel("Novo Documento", aba);
-    m_lblArquivoNota->setObjectName("lblArquivoNota");
-    layoutAcoes->addWidget(m_lblArquivoNota);
-
-    layout->addLayout(layoutAcoes);
-
-    // Barra 2: Formatação (Fonte, Tamanho, B/I/U, Cor)
-    auto *layoutFormatacao = new QHBoxLayout();
-    layoutFormatacao->setSpacing(5);
-
-    // Fonte
-    m_comboFonteNota = new QComboBox(aba);
-    m_comboFonteNota->setObjectName("comboFonteNota");
-    m_comboFonteNota->addItem("Segoe UI", "Segoe UI");
-    m_comboFonteNota->addItem("Arial", "Arial");
-    m_comboFonteNota->addItem("Roboto", "Roboto");
-    m_comboFonteNota->addItem("Times New Roman", "Times New Roman");
-    m_comboFonteNota->addItem("Consolas", "Consolas");
-    m_comboFonteNota->addItem("JetBrains Mono", "JetBrains Mono");
-    layoutFormatacao->addWidget(m_comboFonteNota);
-
-    // Tamanho da fonte
-    m_spinTamanhoNota = new QSpinBox(aba);
-    m_spinTamanhoNota->setObjectName("spinTamanhoNota");
-    m_spinTamanhoNota->setRange(9, 36);
-    m_spinTamanhoNota->setValue(13);
-    m_spinTamanhoNota->setSuffix(" pt");
-    layoutFormatacao->addWidget(m_spinTamanhoNota);
-
-    m_btnFonteMenosNota = new QPushButton("-", aba);
-    m_btnFonteMenosNota->setObjectName("btnFormatoNota");
-    m_btnFonteMenosNota->setFixedSize(28, 26);
-    m_btnFonteMenosNota->setToolTip("Diminuir tamanho da fonte (-)");
-    layoutFormatacao->addWidget(m_btnFonteMenosNota);
-
-    m_btnFonteMaisNota = new QPushButton("+", aba);
-    m_btnFonteMaisNota->setObjectName("btnFormatoNota");
-    m_btnFonteMaisNota->setFixedSize(28, 26);
-    m_btnFonteMaisNota->setToolTip("Aumentar tamanho da fonte (+)");
-    layoutFormatacao->addWidget(m_btnFonteMaisNota);
-
-    // Separador vertical
-    auto *sep = new QFrame(aba);
-    sep->setFrameShape(QFrame::VLine);
-    layoutFormatacao->addWidget(sep);
-
-    // Estilos N (Negrito), I (Itálico), S (Sublinhado)
-    m_btnBoldNota = new QPushButton("N", aba);
-    m_btnBoldNota->setObjectName("btnBoldNota");
-    m_btnBoldNota->setCheckable(true);
-    m_btnBoldNota->setFixedSize(28, 26);
-    m_btnBoldNota->setToolTip("Negrito (N)");
-    layoutFormatacao->addWidget(m_btnBoldNota);
-
-    m_btnItalicNota = new QPushButton("I", aba);
-    m_btnItalicNota->setObjectName("btnItalicNota");
-    m_btnItalicNota->setCheckable(true);
-    m_btnItalicNota->setFixedSize(28, 26);
-    m_btnItalicNota->setToolTip("Itálico (I)");
-    layoutFormatacao->addWidget(m_btnItalicNota);
-
-    m_btnUnderlineNota = new QPushButton("S", aba);
-    m_btnUnderlineNota->setObjectName("btnUnderlineNota");
-    m_btnUnderlineNota->setCheckable(true);
-    m_btnUnderlineNota->setFixedSize(28, 26);
-    m_btnUnderlineNota->setToolTip("Sublinhado (S)");
-    layoutFormatacao->addWidget(m_btnUnderlineNota);
-
-    // Cor
-    m_btnCorNota = new QPushButton("Cor...", aba);
-    m_btnCorNota->setObjectName("btnCorNota");
-    m_btnCorNota->setFixedHeight(26);
-    m_btnCorNota->setToolTip("Alterar cor do texto");
-    layoutFormatacao->addWidget(m_btnCorNota);
-
-    layoutFormatacao->addStretch();
-    layout->addLayout(layoutFormatacao);
-
-    // Área de Edição
-    m_txtAnotacoes = new QTextEdit(aba);
-    m_txtAnotacoes->setObjectName("txtAnotacoes");
-    m_txtAnotacoes->setPlaceholderText("Escreva aqui suas anotações de estudo, resumos e fórmulas do livro...\n\nVocê pode salvar em disco a qualquer momento para retomar seus estudos mais tarde.");
-    layout->addWidget(m_txtAnotacoes, 1);
-
-    // Rodapé de Status
-    auto *layoutStatus = new QHBoxLayout();
-    m_lblStatusNota = new QLabel("0 palavras | 0 caracteres", aba);
-    m_lblStatusNota->setObjectName("lblStatusNota");
-    layoutStatus->addWidget(m_lblStatusNota);
-    layoutStatus->addStretch();
-
-    layout->addLayout(layoutStatus);
-    return aba;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Aba 5: Desempenho & Layout
-// ─────────────────────────────────────────────────────────────────────────────
-
-QWidget* MainWindow::criarAbaConfiguracoes()
-{
-    auto *aba = new QWidget();
-    auto *layout = new QVBoxLayout(aba);
-    layout->setContentsMargins(4, 8, 4, 4);
-    layout->setSpacing(10);
-
-    // ── Tier de Hardware ──────────────────────────────────────────────────
-    auto *lblPerfil = new QLabel("Perfil de Hardware:", aba);
-    lblPerfil->setObjectName("lblSecao");
-    layout->addWidget(lblPerfil);
-
-    m_comboPerfil = new QComboBox(aba);
-    m_comboPerfil->setObjectName("comboPerfil");
-    // Tier 0: tudo na nuvem via chave API cadastrada (zero carga local alem de Tesseract)
-    m_comboPerfil->addItem("Nuvem    — API Gemini/OpenAI  (sem Ollama, requer chave)",  "nuvem");
-    m_comboPerfil->addItem("Basico   — phi3:mini + Whisper tiny.en  (~3 GB RAM)",        "basico");
-    m_comboPerfil->addItem("Medio    — llama3.2:3b + Whisper base.en (~6 GB RAM)",       "medio");
-    m_comboPerfil->addItem("Avancado — llama3 + Whisper base.en     (~12 GB RAM)",       "avancado");
-    layout->addWidget(m_comboPerfil);
-
-    auto *lblTierInfo = new QLabel(
-        "<span style='color:#64748b; font-size:10px;'>"
-        "Trocar o perfil requer reiniciar o backend para ter efeito."
-        "</span>", aba);
-    layout->addWidget(lblTierInfo);
-
-    // ── Tema da Interface ──────────────────────────────────────────────────
-    auto *lblTema = new QLabel("Tema da Interface:", aba);
-    lblTema->setObjectName("lblSecao");
-    layout->addWidget(lblTema);
-
-    m_comboTema = new QComboBox(aba);
-    m_comboTema->setObjectName("comboTema");
-    m_comboTema->addItem("Escuro", "dark");
-    m_comboTema->addItem("Claro", "light");
-    m_comboTema->addItem("Sistema", "system");
-    layout->addWidget(m_comboTema);
-
-    // ── Gerenciamento de Layout ───────────────────────────────────────────
-    auto *lblLayout = new QLabel("Gerenciamento de Layout:", aba);
-    lblLayout->setObjectName("lblSecao");
-    layout->addWidget(lblLayout);
-
-    auto *layoutBtnsLayout = new QHBoxLayout();
-    m_btnSalvarLayout = new QPushButton("Salvar Layout", aba);
-    m_btnSalvarLayout->setObjectName("btnSecundario");
-    layoutBtnsLayout->addWidget(m_btnSalvarLayout);
-
-    m_btnRestaurarLayout = new QPushButton("Restaurar Padrao", aba);
-    m_btnRestaurarLayout->setObjectName("btnSecundario");
-    layoutBtnsLayout->addWidget(m_btnRestaurarLayout);
-    layout->addLayout(layoutBtnsLayout);
-
-    auto *layoutProps = new QHBoxLayout();
-    m_btnProporcao100 = new QPushButton("100% Leitor", aba);
-    m_btnProporcao100->setObjectName("btnSecundario");
-    layoutProps->addWidget(m_btnProporcao100);
-
-    m_btnProporcao70 = new QPushButton("70% / 30%", aba);
-    m_btnProporcao70->setObjectName("btnSecundario");
-    layoutProps->addWidget(m_btnProporcao70);
-
-    m_btnProporcao50 = new QPushButton("50% / 50%", aba);
-    m_btnProporcao50->setObjectName("btnSecundario");
-    layoutProps->addWidget(m_btnProporcao50);
-    layout->addLayout(layoutProps);
-
-    // ── Log ───────────────────────────────────────────────────────────────
-    auto *lblLog = new QLabel("Registro de Atividades:", aba);
-    lblLog->setObjectName("lblSecao");
-    layout->addWidget(lblLog);
-
-    m_logBox = new QTextEdit(aba);
-    m_logBox->setObjectName("logBox");
-    m_logBox->setReadOnly(true);
-    m_logBox->setMaximumHeight(110);
-    layout->addWidget(m_logBox);
-
-    m_lblStatus = new QLabel("Pronto", aba);
-    m_lblStatus->setObjectName("lblStatus");
-    layout->addWidget(m_lblStatus);
-
-    return aba;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1108,55 +625,72 @@ void MainWindow::setupStyleSheet()
 
 void MainWindow::connectSignals()
 {
-    // Ações de Tradução
-    connect(m_btnModoCaptura,    &QPushButton::toggled, this, &MainWindow::onToggleModoCaptura);
-    connect(m_btnTraduzir,       &QPushButton::clicked, this, &MainWindow::onTraduzirDireto);
-    connect(m_btnCopiarTraducao, &QPushButton::clicked, this, &MainWindow::onCopiarTraducao);
-
-    // Tutor e Áudio
-    connect(m_btnOuvir,      &QPushButton::clicked, this, &MainWindow::onOuvirPronuncia);
-    connect(m_btnPararAudio, &QPushButton::clicked, this, &MainWindow::onPararAudio);
-    connect(m_btnGravar,     &QPushButton::clicked, this, &MainWindow::onGravarVozTutor);
-
-    // Layout
-    connect(m_btnSalvarLayout,    &QPushButton::clicked, this, &MainWindow::onSalvarLayout);
-    connect(m_btnRestaurarLayout, &QPushButton::clicked, this, &MainWindow::onRestaurarLayoutPadrao);
-    connect(m_btnProporcao100,    &QPushButton::clicked, this, [this]() { onAplicarProporcao(100); });
-    connect(m_btnProporcao70,     &QPushButton::clicked, this, [this]() { onAplicarProporcao(70); });
-    connect(m_btnProporcao50,     &QPushButton::clicked, this, [this]() { onAplicarProporcao(50); });
-
-    // Configurações
-    connect(m_comboChatIA, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int) {
-        const QString prov = m_comboChatIA->currentData().toString();
-        m_iaProvedor = prov;
-        if (m_lblModeloAtivoChat) {
-            if (prov == "gemini") {
-                if (m_iaModelo.isEmpty() || m_iaModelo.contains("llama") || m_iaModelo.contains("phi")) {
-                    m_iaModelo = "gemini-3.5-flash-lite";
-                }
-                m_lblModeloAtivoChat->setText(m_iaModelo);
-            } else {
-                m_lblModeloAtivoChat->setText(
-                    m_ollamaModelTier.isEmpty() ? "llama3" : m_ollamaModelTier
-                );
+    // Aba 1: Tradução
+    if (m_tabTraducao) {
+        connect(m_tabTraducao, &TranslationWidget::toggleModoCapturaRequested, this, &MainWindow::onToggleModoCaptura);
+        connect(m_tabTraducao, &TranslationWidget::formatoSelecaoChanged, this, [this](int idx) {
+            if (m_overlaySelecao) {
+                m_overlaySelecao->setFormato(idx == 0 ? SelectionOverlayWidget::Formato::Retangular : SelectionOverlayWidget::Formato::Livre);
             }
-        }
-        atualizarBadgeModeloAtivo();
-        salvarConfiguracoes();
-    });
+        });
+        connect(m_tabTraducao, &TranslationWidget::traduzirSelecaoRequested, this, &MainWindow::onTraduzirDireto);
+        connect(m_tabTraducao, &TranslationWidget::retraduzirTextoRequested, this, [this](const QString &txt) {
+            if (txt.isEmpty()) return;
+            m_textoOriginalEn = txt;
+            dispararTraducaoTexto(txt);
+        });
+        connect(m_tabTraducao, &TranslationWidget::copiarTraducaoRequested, this, &MainWindow::onCopiarTraducao);
+    }
 
-    connect(m_comboPerfil, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, &MainWindow::onPerfilAlterado);
+    // Aba 2: Tutor e Áudio
+    if (m_tabTutor) {
+        connect(m_tabTutor, &SpeechTutorWidget::ouvirPronunciaRequested, this, &MainWindow::onOuvirPronuncia);
+        connect(m_tabTutor, &SpeechTutorWidget::pararAudioRequested,     this, &MainWindow::onPararAudio);
+        connect(m_tabTutor, &SpeechTutorWidget::gravarVozRequested,      this, &MainWindow::onGravarVozTutor);
+    }
 
-    connect(m_comboTema, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int) {
-        if (!m_themeManager) return;
-        QString tema = m_comboTema->currentData().toString();
-        if (tema == "dark") m_themeManager->applyTheme(ThemeManager::Theme::Dark);
-        else if (tema == "light") m_themeManager->applyTheme(ThemeManager::Theme::Light);
-        else m_themeManager->applyTheme(ThemeManager::Theme::System);
-    });
+    // Aba 3: Assistente IA & Chat
+    if (m_tabChatIA) {
+        connect(m_tabChatIA, &AiAssistantWidget::provedorIaChanged, this, [this](int) {
+            if (!m_tabChatIA || !m_tabChatIA->comboChatIA()) return;
+            const QString prov = m_tabChatIA->comboChatIA()->currentData().toString();
+            m_iaProvedor = prov;
+            if (m_tabChatIA->lblModeloAtivoChat()) {
+                if (prov == "gemini") {
+                    if (m_iaModelo.isEmpty() || m_iaModelo.contains("llama") || m_iaModelo.contains("phi")) {
+                        m_iaModelo = "gemini-3.5-flash-lite";
+                    }
+                    m_tabChatIA->lblModeloAtivoChat()->setText(m_iaModelo);
+                } else {
+                    m_tabChatIA->lblModeloAtivoChat()->setText(
+                        m_ollamaModelTier.isEmpty() ? "llama3" : m_ollamaModelTier
+                    );
+                }
+            }
+            atualizarBadgeModeloAtivo();
+            salvarConfiguracoes();
+        });
+        connect(m_tabChatIA, &AiAssistantWidget::configurarIaRequested,     this, &MainWindow::onConfigurarIA);
+        connect(m_tabChatIA, &AiAssistantWidget::limparChatRequested,       this, &MainWindow::onLimparChat);
+        connect(m_tabChatIA, &AiAssistantWidget::enviarChatRequested,       this, &MainWindow::onEnviarChat);
+        connect(m_tabChatIA, &AiAssistantWidget::capturarCircuitoRequested, this, &MainWindow::onCapturarCircuitoChat);
+        connect(m_tabChatIA, &AiAssistantWidget::anexarImagemRequested,     this, &MainWindow::onAnexarImagemChat);
+        connect(m_tabChatIA, &AiAssistantWidget::removerImagemRequested,    this, &MainWindow::onRemoverImagemChat);
+        connect(m_tabChatIA, &AiAssistantWidget::colarTrechoRequested,      this, &MainWindow::onColarTrechoChat);
+    }
+
+    // Aba 4: Bloco de Notas
+    if (m_tabAnotacoes) {
+        connect(m_tabAnotacoes, &NotesWidget::logMessage, this, &MainWindow::appendLog);
+    }
+
+    // Aba 5: Configurações & Layout
+    if (m_tabConfiguracoes) {
+        connect(m_tabConfiguracoes, &SettingsWidget::perfilHardwareChanged,    this, &MainWindow::onPerfilAlterado);
+        connect(m_tabConfiguracoes, &SettingsWidget::salvarLayoutRequested,    this, &MainWindow::onSalvarLayout);
+        connect(m_tabConfiguracoes, &SettingsWidget::restaurarLayoutRequested, this, &MainWindow::onRestaurarLayoutPadrao);
+        connect(m_tabConfiguracoes, &SettingsWidget::aplicarProporcaoRequested, this, &MainWindow::onAplicarProporcao);
+    }
 
     // Navegação
     connect(m_btnPagAnterior,  &QPushButton::clicked, this, &MainWindow::onPaginaAnterior);
@@ -1191,35 +725,6 @@ void MainWindow::connectSignals()
     connect(m_net, &NetworkManager::avaliacaoPronunciaResultado,  this, &MainWindow::onAvaliacaoPronunciaResultado);
     connect(m_net, &NetworkManager::chatRespostaResultado,        this, &MainWindow::onChatRespostaResultado);
     connect(m_net, &NetworkManager::ocrPaginaCompletaResultado,   this, &MainWindow::onOcrPaginaCompletaResultado);
-
-    // Assistente IA & Chat
-    connect(m_btnConfigurarIA,     &QPushButton::clicked, this, &MainWindow::onConfigurarIA);
-    connect(m_btnLimparChat,       &QPushButton::clicked, this, &MainWindow::onLimparChat);
-    
-    if (m_promptInput) {
-        connect(m_promptInput, &PromptInputWidget::sendRequested, this, [this](const QString& text) {
-            onEnviarChat();
-        });
-        connect(m_promptInput, &PromptInputWidget::captureCircuitRequested, this, &MainWindow::onCapturarCircuitoChat);
-        connect(m_promptInput, &PromptInputWidget::attachImageRequested, this, &MainWindow::onAnexarImagemChat);
-        connect(m_promptInput, &PromptInputWidget::removeImageRequested, this, &MainWindow::onRemoverImagemChat);
-        connect(m_promptInput, &PromptInputWidget::pasteSnippetRequested, this, &MainWindow::onColarTrechoChat);
-    }
-
-    // ── Bloco de Notas ───────────────────────────────────────────────────
-    if (m_btnNovoNota)       connect(m_btnNovoNota,       &QPushButton::clicked, this, &MainWindow::onLimparAnotacoes);
-    if (m_btnAbrirNota)      connect(m_btnAbrirNota,      &QPushButton::clicked, this, &MainWindow::onAbrirAnotacoes);
-    if (m_btnSalvarNota)     connect(m_btnSalvarNota,     &QPushButton::clicked, this, &MainWindow::onSalvarAnotacoes);
-    if (m_btnCopiarNota)     connect(m_btnCopiarNota,     &QPushButton::clicked, this, &MainWindow::onCopiarAnotacoes);
-    if (m_comboFonteNota)    connect(m_comboFonteNota,    &QComboBox::currentTextChanged, this, &MainWindow::onMudarFonteAnotacoes);
-    if (m_spinTamanhoNota)   connect(m_spinTamanhoNota,   QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::onMudarTamanhoAnotacoes);
-    if (m_btnFonteMaisNota)  connect(m_btnFonteMaisNota,  &QPushButton::clicked, this, &MainWindow::onAumentarFonteAnotacoes);
-    if (m_btnFonteMenosNota) connect(m_btnFonteMenosNota, &QPushButton::clicked, this, &MainWindow::onDiminuirFonteAnotacoes);
-    if (m_btnBoldNota)       connect(m_btnBoldNota,       &QPushButton::clicked, this, &MainWindow::onToggleBoldAnotacoes);
-    if (m_btnItalicNota)     connect(m_btnItalicNota,     &QPushButton::clicked, this, &MainWindow::onToggleItalicAnotacoes);
-    if (m_btnUnderlineNota)  connect(m_btnUnderlineNota,  &QPushButton::clicked, this, &MainWindow::onToggleUnderlineAnotacoes);
-    if (m_btnCorNota)        connect(m_btnCorNota,        &QPushButton::clicked, this, &MainWindow::onEscolherCorAnotacoes);
-    if (m_txtAnotacoes)      connect(m_txtAnotacoes,      &QTextEdit::textChanged, this, &MainWindow::onAtualizarContadorNotas);
 
     connect(m_pdfView->pageNavigator(), &QPdfPageNavigator::currentPageChanged,
             this, [this](int pag) {
@@ -1336,18 +841,18 @@ void MainWindow::carregarConfiguracoes()
     m_tabWidget->setCurrentIndex(abaIndex);
 
     const int vozIndex = settings.value("vozIndex", 0).toInt();
-    if (vozIndex >= 0 && vozIndex < m_comboVoz->count()) {
-        m_comboVoz->setCurrentIndex(vozIndex);
+    if (m_tabTutor && m_tabTutor->comboVoz() && vozIndex >= 0 && vozIndex < m_tabTutor->comboVoz()->count()) {
+        m_tabTutor->comboVoz()->setCurrentIndex(vozIndex);
     }
 
     const int velIndex = settings.value("velIndex", 1).toInt();
-    if (velIndex >= 0 && velIndex < m_comboVelocidade->count()) {
-        m_comboVelocidade->setCurrentIndex(velIndex);
+    if (m_tabTutor && m_tabTutor->comboVelocidade() && velIndex >= 0 && velIndex < m_tabTutor->comboVelocidade()->count()) {
+        m_tabTutor->comboVelocidade()->setCurrentIndex(velIndex);
     }
 
     const int nivelIndex = settings.value("nivelIndex", 1).toInt();
-    if (nivelIndex >= 0 && nivelIndex < m_comboNivelTutor->count()) {
-        m_comboNivelTutor->setCurrentIndex(nivelIndex);
+    if (m_tabTutor && m_tabTutor->comboNivelTutor() && nivelIndex >= 0 && nivelIndex < m_tabTutor->comboNivelTutor()->count()) {
+        m_tabTutor->comboNivelTutor()->setCurrentIndex(nivelIndex);
     }
 
     m_iaProvedor = settings.value("iaProvedor", "gemini").toString();
@@ -1363,15 +868,15 @@ void MainWindow::carregarConfiguracoes()
 
     // Tier de hardware (Padrão: 0 - Nuvem / Gemini para funcionamento instantâneo)
     const int tierIdx = settings.value("tierIndex", 0).toInt();
-    if (m_comboPerfil && tierIdx >= 0 && tierIdx < m_comboPerfil->count())
-        m_comboPerfil->setCurrentIndex(tierIdx);
+    if (m_tabConfiguracoes && m_tabConfiguracoes->comboPerfil() && tierIdx >= 0 && tierIdx < m_tabConfiguracoes->comboPerfil()->count())
+        m_tabConfiguracoes->comboPerfil()->setCurrentIndex(tierIdx);
     m_ollamaModelTier = settings.value("ollamaModelTier", "llama3").toString();
     m_whisperModelTier = settings.value("whisperModelTier", "base.en").toString();
 
     // Seletor de IA no chat
-    if (m_comboChatIA) {
-        const int iaIdx = m_comboChatIA->findData(m_iaProvedor);
-        if (iaIdx >= 0) m_comboChatIA->setCurrentIndex(iaIdx);
+    if (m_tabChatIA && m_tabChatIA->comboChatIA()) {
+        const int iaIdx = m_tabChatIA->comboChatIA()->findData(m_iaProvedor);
+        if (iaIdx >= 0) m_tabChatIA->comboChatIA()->setCurrentIndex(iaIdx);
     }
 
     if (m_iaProvedor == "gemini") {
@@ -1380,11 +885,11 @@ void MainWindow::carregarConfiguracoes()
         }
     }
 
-    if (m_lblModeloAtivoChat) {
+    if (m_tabChatIA && m_tabChatIA->lblModeloAtivoChat()) {
         if (m_iaProvedor == "gemini") {
-            m_lblModeloAtivoChat->setText(m_iaModelo);
+            m_tabChatIA->lblModeloAtivoChat()->setText(m_iaModelo);
         } else {
-            m_lblModeloAtivoChat->setText(
+            m_tabChatIA->lblModeloAtivoChat()->setText(
                 m_ollamaModelTier.isEmpty() ? "llama3" : m_ollamaModelTier
             );
         }
@@ -1400,13 +905,13 @@ void MainWindow::salvarConfiguracoes()
     settings.setValue("splitter", m_splitter->saveState());
     settings.setValue("painelVisivel", m_tabWidget->isVisible());
     settings.setValue("abaAtual", m_tabWidget->currentIndex());
-    settings.setValue("vozIndex", m_comboVoz->currentIndex());
-    settings.setValue("velIndex", m_comboVelocidade->currentIndex());
-    settings.setValue("nivelIndex", m_comboNivelTutor->currentIndex());
+    settings.setValue("vozIndex", (m_tabTutor && m_tabTutor->comboVoz()) ? m_tabTutor->comboVoz()->currentIndex() : 0);
+    settings.setValue("velIndex", (m_tabTutor && m_tabTutor->comboVelocidade()) ? m_tabTutor->comboVelocidade()->currentIndex() : 1);
+    settings.setValue("nivelIndex", (m_tabTutor && m_tabTutor->comboNivelTutor()) ? m_tabTutor->comboNivelTutor()->currentIndex() : 1);
     settings.setValue("iaProvedor", m_iaProvedor);
     settings.setValue("iaApiKey", m_iaApiKey);
     settings.setValue("iaModelo", m_iaModelo);
-    settings.setValue("tierIndex",        m_comboPerfil ? m_comboPerfil->currentIndex() : 0);
+    settings.setValue("tierIndex",        (m_tabConfiguracoes && m_tabConfiguracoes->comboPerfil()) ? m_tabConfiguracoes->comboPerfil()->currentIndex() : 0);
     settings.setValue("ollamaModelTier",  m_ollamaModelTier);
     settings.setValue("whisperModelTier", m_whisperModelTier);
 }
@@ -1654,11 +1159,13 @@ void MainWindow::dropEvent(QDropEvent *event)
 void MainWindow::onToggleModoCaptura(bool ativo)
 {
     m_modoCaptura = ativo;
-    m_btnModoCaptura->setChecked(ativo);
+    if (m_tabTraducao && m_tabTraducao->btnModoCaptura()) {
+        m_tabTraducao->btnModoCaptura()->setChecked(ativo);
+    }
 
-    if (m_comboFormatoSelecao && m_overlaySelecao) {
+    if (m_tabTraducao && m_tabTraducao->comboFormatoSelecao() && m_overlaySelecao) {
         m_overlaySelecao->setFormato(
-            m_comboFormatoSelecao->currentIndex() == 0 
+            m_tabTraducao->comboFormatoSelecao()->currentIndex() == 0 
                 ? SelectionOverlayWidget::Formato::Retangular 
                 : SelectionOverlayWidget::Formato::Livre
         );
@@ -1694,9 +1201,11 @@ void MainWindow::onToggleModoCaptura(bool ativo)
 }
 
 
-void MainWindow::onTraduzirDireto()
+void MainWindow::dispararTraducaoTexto(const QString &textoEn, const QByteArray &imagemB64)
 {
-    const int tierIdx = m_comboPerfil ? m_comboPerfil->currentIndex() : 0;
+    if (!m_net) return;
+
+    const int tierIdx = (m_tabConfiguracoes && m_tabConfiguracoes->comboPerfil()) ? m_tabConfiguracoes->comboPerfil()->currentIndex() : 0;
     QString geminiKey;
     QString modeloOllama;
 
@@ -1706,15 +1215,12 @@ void MainWindow::onTraduzirDireto()
         modeloOllama = m_iaModelo.trimmed();
     } else if (tierIdx == 1) {
         // Tier 1: Básico (phi3:mini local)
-        geminiKey = QString();
         modeloOllama = "phi3:mini";
     } else if (tierIdx == 2) {
         // Tier 2: Médio (llama3.2:3b local)
-        geminiKey = QString();
         modeloOllama = "llama3.2:3b";
     } else {
         // Tier 3: Avançado (llama3 local)
-        geminiKey = QString();
         modeloOllama = "llama3";
     }
 
@@ -1723,11 +1229,16 @@ void MainWindow::onTraduzirDireto()
         m_badgeMetricasIA->setText("Processando Tradução...");
     }
 
+    m_net->traduzirDireto(textoEn, imagemB64, geminiKey, modeloOllama);
+}
+
+void MainWindow::onTraduzirDireto()
+{
     if (m_textoOcrAtual.startsWith("BASE64:")) {
         const QByteArray b64 = m_textoOcrAtual.mid(7).toLatin1();
-        m_net->traduzirDireto(QString(), b64, geminiKey, modeloOllama);
+        dispararTraducaoTexto(QString(), b64);
     } else if (!m_textoOcrAtual.isEmpty()) {
-        m_net->traduzirDireto(m_textoOcrAtual, QByteArray(), geminiKey, modeloOllama);
+        dispararTraducaoTexto(m_textoOcrAtual, QByteArray());
     }
 }
 
@@ -1742,12 +1253,13 @@ void MainWindow::onTraducaoDiretaResultado(const QString &textoIngles, const QSt
         m_badgeMetricasIA->setText(QString("%1 • %2ms").arg(mod).arg(elapsedMs));
     }
 
-    if (m_promptTextoTutor) {
-        m_promptTextoTutor->setText(textoIngles);
+    if (m_tabTutor) {
+        if (m_tabTutor->promptTextoTutor()) {
+            m_tabTutor->promptTextoTutor()->setText(textoIngles);
+        }
+        if (m_tabTutor->btnOuvir())  m_tabTutor->btnOuvir()->setEnabled(!textoIngles.isEmpty());
+        if (m_tabTutor->btnGravar()) m_tabTutor->btnGravar()->setEnabled(!textoIngles.isEmpty());
     }
-
-    m_btnOuvir->setEnabled(!textoIngles.isEmpty());
-    m_btnGravar->setEnabled(!textoIngles.isEmpty());
 
     // Controle rigoroso da Janela Flutuante vs Painel Lateral:
     // A janela flutuante só aparece quando acionada via atalho em tela cheia (1º toque)
@@ -1768,23 +1280,9 @@ void MainWindow::onTraducaoDiretaResultado(const QString &textoIngles, const QSt
         }
     }
 
-    if (m_txtTraducaoOriginalEn && !m_txtTraducaoOriginalEn->hasFocus()) {
-        m_txtTraducaoOriginalEn->blockSignals(true);
-        m_txtTraducaoOriginalEn->setPlainText(textoIngles);
-        m_txtTraducaoOriginalEn->blockSignals(false);
+    if (m_tabTraducao) {
+        m_tabTraducao->exibirResultado(textoIngles, traducaoPortugues, modeloUsado);
     }
-
-    const QString badgeTag = !modeloUsado.isEmpty()
-        ? QString(" <span style='color: #10b981; font-size: 10px; font-weight: 600; background: #064e3b; padding: 2px 6px; border-radius: 4px;'>[%1]</span>")
-            .arg(modeloUsado.toHtmlEscaped())
-        : QString();
-
-    m_promptTraducao->setHtml(
-        "<div>"
-        "<span style='color: #60a5fa; font-size: 11px; font-weight: 600; text-transform: uppercase;'>Tradução Técnica (PT-BR)</span>" + badgeTag + "<br><br>"
-        "<span style='color: #f3f4f6; font-size: 13px; font-weight: 500; line-height: 1.5;'>" + traducaoPortugues.toHtmlEscaped() + "</span>"
-        "</div>"
-    );
 
     const QString logMsg = !modeloUsado.isEmpty()
         ? QString("Tradução técnica concluída com sucesso via [%1].").arg(modeloUsado)
@@ -1809,10 +1307,10 @@ void MainWindow::onCopiarTraducao()
 void MainWindow::onOuvirPronuncia()
 {
     QString texto;
-    if (m_promptTextoTutor) {
-        texto = m_promptTextoTutor->selectedText();
+    if (m_tabTutor && m_tabTutor->promptTextoTutor()) {
+        texto = m_tabTutor->promptTextoTutor()->selectedText();
         if (texto.isEmpty()) {
-            texto = m_promptTextoTutor->text().trimmed();
+            texto = m_tabTutor->promptTextoTutor()->text().trimmed();
         }
     } else {
         texto = m_textoOriginalEn.isEmpty()
@@ -1825,9 +1323,10 @@ void MainWindow::onOuvirPronuncia()
         return;
     }
 
-    const QString voz = m_comboVoz->currentData().toString();
-    const QString vel = m_comboVelocidade->currentData().toString();
-    appendLog(QString("Reproduzindo pronúncia neural (%1, velocidade %2)...").arg(voz, m_comboVelocidade->currentText()), "info");
+    const QString voz = (m_tabTutor && m_tabTutor->comboVoz()) ? m_tabTutor->comboVoz()->currentData().toString() : QStringLiteral("en-US-JennyNeural");
+    const QString vel = (m_tabTutor && m_tabTutor->comboVelocidade()) ? m_tabTutor->comboVelocidade()->currentData().toString() : QStringLiteral("+0%");
+    const QString velTexto = (m_tabTutor && m_tabTutor->comboVelocidade()) ? m_tabTutor->comboVelocidade()->currentText() : QStringLiteral("1.0x");
+    appendLog(QString("Reproduzindo pronúncia neural (%1, velocidade %2)...").arg(voz, velTexto), "info");
     m_net->falarTexto(texto, voz, vel);
 }
 
@@ -1846,10 +1345,10 @@ void MainWindow::onGravarVozTutor()
 {
     if (!m_gravando) {
         QString textoParaLer;
-        if (m_promptTextoTutor) {
-            textoParaLer = m_promptTextoTutor->selectedText();
+        if (m_tabTutor && m_tabTutor->promptTextoTutor()) {
+            textoParaLer = m_tabTutor->promptTextoTutor()->selectedText();
             if (textoParaLer.isEmpty()) {
-                textoParaLer = m_promptTextoTutor->text().trimmed();
+                textoParaLer = m_tabTutor->promptTextoTutor()->text().trimmed();
             }
         }
         
@@ -1869,20 +1368,17 @@ void MainWindow::onGravarVozTutor()
         m_textoOriginalEn = textoParaLer; // Salva o texto que será usado para a avaliação
 
         m_gravando = true;
-        m_btnGravar->setText("Parar e Avaliar");
-        m_btnGravar->setProperty("recording", true);
-        m_btnGravar->style()->unpolish(m_btnGravar);
-        m_btnGravar->style()->polish(m_btnGravar);
+        if (m_tabTutor) m_tabTutor->setRecordingState(true);
         appendLog("Microfone aberto: leia o texto em inglês em voz alta...");
         m_net->iniciarGravacao();
     } else {
         m_gravando = false;
-        m_btnGravar->setText("Gravar Minha Voz");
-        m_btnGravar->setProperty("recording", false);
-        m_btnGravar->style()->unpolish(m_btnGravar);
-        m_btnGravar->style()->polish(m_btnGravar);
-        appendLog("Processando áudio com Whisper...");
-        m_net->pararGravacao("en"); // Transcreve em inglês para o tutor
+        if (m_tabTutor) m_tabTutor->setRecordingState(false);
+        if (m_quickLookupPopover && m_quickLookupPopover->isVisible()) {
+            m_quickLookupPopover->setGravandoTutor(false);
+        }
+        appendLog(QString("Processando áudio com Whisper (%1)...").arg(m_whisperModelTier));
+        m_net->pararGravacao("en", m_whisperModelTier); // Transcreve em inglês usando o modelo Whisper do perfil
     }
 }
 
@@ -1892,8 +1388,9 @@ void MainWindow::onTranscricaoResultado(const QString &texto)
 
     // Envia automaticamente para avaliação fonética do tutor com o nível de exigência escolhido
     if (!m_textoOriginalEn.isEmpty()) {
-        const QString nivel = m_comboNivelTutor->currentData().toString();
-        const int tierIdx = m_comboPerfil ? m_comboPerfil->currentIndex() : 0;
+        const QString nivel = (m_tabTutor && m_tabTutor->comboNivelTutor()) ? m_tabTutor->comboNivelTutor()->currentData().toString() : QStringLiteral("intermediario");
+        const QString nivelTexto = (m_tabTutor && m_tabTutor->comboNivelTutor()) ? m_tabTutor->comboNivelTutor()->currentText() : QStringLiteral("Intermediário");
+        const int tierIdx = (m_tabConfiguracoes && m_tabConfiguracoes->comboPerfil()) ? m_tabConfiguracoes->comboPerfil()->currentIndex() : 0;
         QString modelo;
         QString apiKey;
 
@@ -1908,37 +1405,18 @@ void MainWindow::onTranscricaoResultado(const QString &texto)
             modelo = "llama3";
         }
 
-        appendLog(QString("Avaliando precisão da pronúncia (Nível: %1, Modelo: %2)...").arg(m_comboNivelTutor->currentText(), modelo), "info");
+        appendLog(QString("Avaliando precisão da pronúncia (Nível: %1, Modelo: %2)...").arg(nivelTexto, modelo), "info");
         m_net->avaliarPronuncia(m_textoOriginalEn, texto, nivel, modelo, apiKey);
     }
 }
 
-void MainWindow::onAvaliacaoPronunciaResultado(int nota, const QString &feedback, const QString &textoFalado, const QStringList &palavrasAusentes)
+void MainWindow::onAvaliacaoPronunciaResultado(int nota, const QString &feedback, const QString &textoFalado, const QStringList &palavrasAusentes, const QString &htmlDestacado)
 {
-    m_barAcuracia->setValue(nota);
-
-    QString html = QString(
-        "<div style='margin-bottom: 8px;'>"
-        "<span style='color: #60a5fa; font-weight: 600; font-size: 13px;'>Nota de Correspondência: %1%</span>"
-        "</div>"
-        "<div style='background-color: #1e222a; border-left: 3px solid #3b82f6; padding: 6px 8px; border-radius: 4px; margin-bottom: 8px;'>"
-        "<span style='color: #9ca3af; font-size: 10px; font-weight: 600; text-transform: uppercase;'>O que o Tutor ouviu da sua fala:</span><br>"
-        "<span style='color: #e5e7eb; font-size: 12px; font-weight: 500;'>\"%2\"</span>"
-        "</div>"
-        "<div style='margin-bottom: 8px; color: #d1d5db; font-size: 12px; line-height: 1.4;'>"
-        "<b>Dica do Tutor:</b><br>%3"
-        "</div>"
-    ).arg(nota).arg(textoFalado.toHtmlEscaped()).arg(feedback.toHtmlEscaped());
-
-    if (!palavrasAusentes.isEmpty()) {
-        html += "<div style='background-color: #26201a; border-left: 3px solid #f59e0b; padding: 5px 8px; border-radius: 4px; color: #fbbf24; font-size: 11px; margin-top: 6px;'>"
-                "<b>Atenção nestes termos:</b><br>" + palavrasAusentes.join(", ").toHtmlEscaped() +
-                "</div>";
+    if (m_tabTutor) {
+        m_tabTutor->exibirAvaliacao(nota, feedback, textoFalado, palavrasAusentes, htmlDestacado);
     }
-
-    m_txtFeedbackTutor->setHtml(html);
     if (m_quickLookupPopover && m_quickLookupPopover->isVisible()) {
-        m_quickLookupPopover->atualizarResultadoTutor(nota, feedback, textoFalado, palavrasAusentes);
+        m_quickLookupPopover->atualizarResultadoTutor(nota, feedback, textoFalado, palavrasAusentes, htmlDestacado);
     }
     appendLog(QString("Avaliação concluída: %1% de acurácia.").arg(nota), "success");
 }
@@ -1965,11 +1443,11 @@ void MainWindow::onPerfilAlterado(int index)
 
     const QString aviso = (idx == 0)
         ? QStringLiteral(" — Certifique-se de ter a chave API configurada.")
-        : QStringLiteral(" Reinicie o backend para ter efeito.");
-    appendLog(QString("Perfil alterado para: %1.%2").arg(tiers[idx].descricao, aviso), "info");
+        : QStringLiteral(" — Aplicado em tempo real.");
+    appendLog(QString("Perfil alterado para: %1%2").arg(tiers[idx].descricao, aviso), "info");
 
-    if (m_lblModeloAtivoChat && m_iaProvedor == "ollama") {
-        m_lblModeloAtivoChat->setText(m_ollamaModelTier.isEmpty() ? "llama3" : m_ollamaModelTier);
+    if (m_tabChatIA && m_tabChatIA->lblModeloAtivoChat() && m_iaProvedor == "ollama") {
+        m_tabChatIA->lblModeloAtivoChat()->setText(m_ollamaModelTier.isEmpty() ? "llama3" : m_ollamaModelTier);
     }
     atualizarBadgeModeloAtivo();
 }
@@ -1980,7 +1458,7 @@ void MainWindow::atualizarBadgeModeloAtivo()
 
     QString modeloNome;
     QString whisperNome;
-    const int tierIdx = m_comboPerfil ? m_comboPerfil->currentIndex() : 0;
+    const int tierIdx = (m_tabConfiguracoes && m_tabConfiguracoes->comboPerfil()) ? m_tabConfiguracoes->comboPerfil()->currentIndex() : 0;
 
     switch (tierIdx) {
     case 0:
@@ -2015,15 +1493,14 @@ void MainWindow::atualizarBadgeModeloAtivo()
     // No modo local/offline, modelos de texto não suportam visão computacional.
     // As opções de capturar circuito ou anexar imagem só aparecem no modo Nuvem (Gemini).
     const bool isNuvem = (tierIdx == 0);
-    if (m_promptInput) {
-        m_promptInput->setButtonsVisible(isNuvem, isNuvem);
-    }
-    if (!isNuvem && m_promptInput) {
-        m_promptInput->hideImagePreview();
-        m_chatImagemBase64.clear();
-    }
-    if (m_promptInput) {
-        m_promptInput->setPlaceholderText(
+    PromptInputWidget *chatPrompt = m_tabChatIA ? m_tabChatIA->promptInput() : nullptr;
+    if (chatPrompt) {
+        chatPrompt->setButtonsVisible(isNuvem, isNuvem);
+        if (!isNuvem) {
+            chatPrompt->hideImagePreview();
+            m_chatImagemBase64.clear();
+        }
+        chatPrompt->setPlaceholderText(
             isNuvem ? "Pergunte sobre o circuito ou texto técnico... (Enter para enviar, Shift+Enter para nova linha)"
                     : "Pergunte sobre o texto técnico... (Enter para enviar, Shift+Enter para nova linha)"
         );
@@ -2340,11 +1817,11 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                     } else { // Tradução Técnica (Ctrl+T)
                         if (!textoExtraido.isEmpty()) {
                             m_textoOcrAtual = textoExtraido;
-                            m_btnTraduzir->setEnabled(true);
+                            if (m_tabTraducao && m_tabTraducao->btnTraduzir()) m_tabTraducao->btnTraduzir()->setEnabled(true);
                             appendLog(QString("Texto extraído instantaneamente do cache OCR (%1 palavras).").arg(textoExtraido.split(' ', Qt::SkipEmptyParts).size()), "success");
                         } else {
                             m_textoOcrAtual = "BASE64:" + bytesImg.toBase64();
-                            m_btnTraduzir->setEnabled(true);
+                            if (m_tabTraducao && m_tabTraducao->btnTraduzir()) m_tabTraducao->btnTraduzir()->setEnabled(true);
                         }
                         m_origemCapturaTelaCheiaFlutuante = true; // Mantém ativo para onTraducaoDiretaResultado
                         onTraduzirDireto();
@@ -2353,22 +1830,22 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                     // Modo tradicional (fora de tela cheia ou pelo botão Modo Seleção da barra lateral)
                     if (tipoCaptura == ModoCapturaRubberBand::CircuitoChat) {
                         m_chatImagemBase64 = QString::fromLatin1(bytesImg.toBase64());
-                        if (m_promptInput) {
-                            m_promptInput->showImagePreview(m_chatImagemBase64, QString("Circuito capturado (%1x%2 px)").arg(rect.width()).arg(rect.height()));
+                        if (m_tabChatIA && m_tabChatIA->promptInput()) {
+                            m_tabChatIA->promptInput()->showImagePreview(m_chatImagemBase64, QString("Circuito capturado (%1x%2 px)").arg(rect.width()).arg(rect.height()));
                         }
                         abrirOuAtivarAba(2); // Aba do Chat IA
                         appendLog("Circuito capturado e anexado ao Assistente IA.", "success");
                     } else {
                         if (!textoExtraido.isEmpty()) {
                             m_textoOcrAtual = textoExtraido;
-                            m_btnTraduzir->setEnabled(true);
+                            if (m_tabTraducao && m_tabTraducao->btnTraduzir()) m_tabTraducao->btnTraduzir()->setEnabled(true);
                             appendLog(QString("Texto extraído instantaneamente do cache OCR (%1 palavras).").arg(textoExtraido.split(' ', Qt::SkipEmptyParts).size()), "success");
                         } else {
                             m_textoOcrAtual = "BASE64:" + bytesImg.toBase64();
-                            m_btnTraduzir->setEnabled(true);
+                            if (m_tabTraducao && m_tabTraducao->btnTraduzir()) m_tabTraducao->btnTraduzir()->setEnabled(true);
                         }
 
-                        if (m_chkTraducaoAuto->isChecked()) {
+                        if (m_tabTraducao && m_tabTraducao->chkTraducaoAuto() && m_tabTraducao->chkTraducaoAuto()->isChecked()) {
                             onTraduzirDireto();
                         } else {
                             appendLog("Região capturada. Clique em 'Traduzir Seleção'.");
@@ -3020,20 +2497,21 @@ void MainWindow::onServidorOnline(bool online)
 {
     if (online) {
         if (m_lblStatusGeral) m_lblStatusGeral->setText("Motor de IA ativo");
-        m_lblStatus->setText("Motor de IA ativo");
+        if (m_tabConfiguracoes) m_tabConfiguracoes->setStatusText("Motor de IA ativo");
         emit backendPronto();
         m_net->verificarModelosStatus();
     } else {
         if (m_lblStatusGeral) m_lblStatusGeral->setText("Iniciando motor de IA em segundo plano...");
-        m_lblStatus->setText("Iniciando motor de IA em segundo plano...");
+        if (m_tabConfiguracoes) m_tabConfiguracoes->setStatusText("Iniciando motor de IA em segundo plano...");
         verificarEIniciarBackend();
     }
 }
 
 void MainWindow::onModelosStatusRecebido(bool ollamaOnline, bool temPhi3, bool temLlama32, bool temLlama3)
 {
-    if (!m_comboPerfil) return;
-    auto *model = qobject_cast<QStandardItemModel*>(m_comboPerfil->model());
+    QComboBox *comboPerfil = m_tabConfiguracoes ? m_tabConfiguracoes->comboPerfil() : nullptr;
+    if (!comboPerfil) return;
+    auto *model = qobject_cast<QStandardItemModel*>(comboPerfil->model());
     if (!model) return;
 
     // Item 0: Nuvem (Gemini / OpenAI) - sempre habilitado
@@ -3082,17 +2560,17 @@ void MainWindow::onModelosStatusRecebido(bool ollamaOnline, bool temPhi3, bool t
     }
 
     // Se o item atualmente selecionado estiver desabilitado, seleciona o melhor disponível
-    const int idxAtual = m_comboPerfil->currentIndex();
+    const int idxAtual = comboPerfil->currentIndex();
     if (auto *itemAtual = model->item(idxAtual)) {
         if (!itemAtual->isEnabled()) {
             if (hab2) {
-                m_comboPerfil->setCurrentIndex(2);
+                comboPerfil->setCurrentIndex(2);
             } else if (hab1) {
-                m_comboPerfil->setCurrentIndex(1);
+                comboPerfil->setCurrentIndex(1);
             } else if (hab3) {
-                m_comboPerfil->setCurrentIndex(3);
+                comboPerfil->setCurrentIndex(3);
             } else {
-                m_comboPerfil->setCurrentIndex(0); // Nuvem como fallback seguro
+                comboPerfil->setCurrentIndex(0); // Nuvem como fallback seguro
             }
         }
     }
@@ -3140,67 +2618,58 @@ void MainWindow::puxarModeloOllama(const QString &modelo)
 void MainWindow::onRequisicaoIniciada(const QString &endpoint)
 {
     if (endpoint == "/traduzir") {
-        setButtonBusy(m_btnTraduzir, true);
+        if (m_tabTraducao) setButtonBusy(m_tabTraducao->btnTraduzir(), true);
         if (m_lblStatusGeral) m_lblStatusGeral->setText("Traduzindo seleção técnica...");
-        m_lblStatus->setText("Traduzindo...");
+        if (m_tabConfiguracoes) m_tabConfiguracoes->setStatusText("Traduzindo...");
         const int tempoEst = (m_iaProvedor == "gemini") ? 3200 : 1800;
         iniciarProgresso("Tradução", tempoEst);
     } else if (endpoint == "/falar") {
-        setButtonBusy(m_btnOuvir, true);
+        if (m_tabTutor) setButtonBusy(m_tabTutor->btnOuvir(), true);
         if (m_lblStatusGeral) m_lblStatusGeral->setText("Gerando áudio da fala...");
-        m_lblStatus->setText("Gerando áudio da fala...");
+        if (m_tabConfiguracoes) m_tabConfiguracoes->setStatusText("Gerando áudio da fala...");
         iniciarProgresso("Voz", 1200);
     } else if (endpoint.startsWith("/parar_gravacao")) {
-        setButtonBusy(m_btnGravar, true);
+        if (m_tabTutor) setButtonBusy(m_tabTutor->btnGravar(), true);
         if (m_lblStatusGeral) m_lblStatusGeral->setText("Transcrevendo com Whisper...");
-        m_lblStatus->setText("Transcrevendo com Whisper...");
+        if (m_tabConfiguracoes) m_tabConfiguracoes->setStatusText("Transcrevendo com Whisper...");
         iniciarProgresso("Transcrição", 1500);
     } else if (endpoint == "/avaliar_pronuncia") {
         if (m_lblStatusGeral) m_lblStatusGeral->setText("Analisando pronúncia técnica...");
-        m_lblStatus->setText("Analisando pronúncia...");
+        if (m_tabConfiguracoes) m_tabConfiguracoes->setStatusText("Analisando pronúncia...");
         iniciarProgresso("Avaliação", 1800);
     } else if (endpoint == "/chat_ia") {
-        if (m_promptInput) m_promptInput->setSendButtonBusy(true);
+        if (m_tabChatIA && m_tabChatIA->promptInput()) m_tabChatIA->promptInput()->setSendButtonBusy(true);
         if (m_lblStatusGeral) m_lblStatusGeral->setText("Consultando Assistente IA...");
-        m_lblStatus->setText("Consultando Assistente IA...");
+        if (m_tabConfiguracoes) m_tabConfiguracoes->setStatusText("Consultando Assistente IA...");
         iniciarProgresso("Assistente", 2800);
     }
 }
 
 void MainWindow::onRequisicaoConcluida(const QString &endpoint)
 {
-    if (endpoint == "/traduzir") setButtonBusy(m_btnTraduzir, false);
-    if (endpoint == "/falar")    setButtonBusy(m_btnOuvir, false);
-    if (endpoint.startsWith("/parar_gravacao")) setButtonBusy(m_btnGravar, false);
-    if (endpoint == "/chat_ia" && m_promptInput) m_promptInput->setSendButtonBusy(false);
+    if (endpoint == "/traduzir" && m_tabTraducao) setButtonBusy(m_tabTraducao->btnTraduzir(), false);
+    if (endpoint == "/falar" && m_tabTutor) setButtonBusy(m_tabTutor->btnOuvir(), false);
+    if (endpoint.startsWith("/parar_gravacao") && m_tabTutor) setButtonBusy(m_tabTutor->btnGravar(), false);
+    if (endpoint == "/chat_ia" && m_tabChatIA && m_tabChatIA->promptInput()) m_tabChatIA->promptInput()->setSendButtonBusy(false);
 
     if (m_lblStatusGeral) m_lblStatusGeral->setText("Pronto");
-    m_lblStatus->setText("Pronto");
+    if (m_tabConfiguracoes) m_tabConfiguracoes->setStatusText("Pronto");
     finalizarProgresso(true);
 }
 
 void MainWindow::onErroRequisicao(const QString &endpoint, const QString &mensagem)
 {
-    if (endpoint == "/traduzir") setButtonBusy(m_btnTraduzir, false);
-    if (endpoint == "/falar")    setButtonBusy(m_btnOuvir, false);
-    if (endpoint.startsWith("/parar_gravacao")) setButtonBusy(m_btnGravar, false);
+    if (endpoint == "/traduzir" && m_tabTraducao) setButtonBusy(m_tabTraducao->btnTraduzir(), false);
+    if (endpoint == "/falar" && m_tabTutor) setButtonBusy(m_tabTutor->btnOuvir(), false);
+    if (endpoint.startsWith("/parar_gravacao") && m_tabTutor) setButtonBusy(m_tabTutor->btnGravar(), false);
     if (endpoint == "/chat_ia") {
-        if (m_promptInput) m_promptInput->setSendButtonBusy(false);
-        if (m_chatHistorico) {
-            m_chatHistorico->append(
-                QString("<div style='margin-bottom: 12px; margin-top: 6px; background-color: rgba(239, 68, 68, 0.12); "
-                        "border: 1px solid rgba(239, 68, 68, 0.35); border-left: 3px solid #ef4444; border-radius: 8px; padding: 10px 12px;'>"
-                        "<div style='font-size: 11px; font-weight: 700; color: #f87171; margin-bottom: 4px;'>Falha na comunicacao com a IA</div>"
-                        "<div style='color: #fca5a5; font-size: 13px; line-height: 1.4;'>%1</div>"
-                        "<div style='margin-top: 6px; font-size: 11px; color: #94a3b8;'>"
-                        "Verifique sua chave de API em <b>Configurar API</b>.</div>"
-                        "</div>").arg(mensagem.toHtmlEscaped())
-            );
-            m_chatHistorico->verticalScrollBar()->setValue(m_chatHistorico->verticalScrollBar()->maximum());
+        if (m_tabChatIA && m_tabChatIA->promptInput()) m_tabChatIA->promptInput()->setSendButtonBusy(false);
+        if (m_tabChatIA) {
+            m_tabChatIA->adicionarMensagemErro(mensagem);
         }
     }
     if (m_lblStatusGeral) m_lblStatusGeral->setText("Falha na operação");
-    m_lblStatus->setText("Falha na operação");
+    if (m_tabConfiguracoes) m_tabConfiguracoes->setStatusText("Falha na operação");
     appendLog("Erro em " + endpoint + ": " + mensagem, "error");
     finalizarProgresso(false);
 }
@@ -3208,11 +2677,11 @@ void MainWindow::onErroRequisicao(const QString &endpoint, const QString &mensag
 void MainWindow::onLimparOcrResultado(const QString &texto)
 {
     m_textoOriginalEn = texto;
-    if (m_promptTextoTutor) {
-        m_promptTextoTutor->setText(texto);
+    if (m_tabTutor) {
+        if (m_tabTutor->promptTextoTutor()) m_tabTutor->promptTextoTutor()->setText(texto);
+        if (m_tabTutor->btnOuvir()) m_tabTutor->btnOuvir()->setEnabled(true);
+        if (m_tabTutor->btnGravar()) m_tabTutor->btnGravar()->setEnabled(true);
     }
-    m_btnOuvir->setEnabled(true);
-    m_btnGravar->setEnabled(true);
     appendLog("Texto extraído com sucesso.");
 }
 
@@ -3234,10 +2703,8 @@ void MainWindow::appendLog(const QString &mensagem, const QString &tipo)
     if (tipo == "success") cor = "#34d399";
 
     // Mostra na UI
-    if (m_logBox) {
-        m_logBox->append(QString("<span style='color: #4b5563;'>[%1]</span> <span style='color: %2;'>%3</span>")
-                         .arg(timestamp, cor, mensagem.toHtmlEscaped()));
-        m_logBox->verticalScrollBar()->setValue(m_logBox->verticalScrollBar()->maximum());
+    if (m_tabConfiguracoes) {
+        m_tabConfiguracoes->appendLogEntry(timestamp, cor, mensagem);
     }
     
     // Grava no arquivo vellum.log
@@ -3288,8 +2755,8 @@ void MainWindow::onAnexarImagemChat()
         m_chatImagemBase64 = QString::fromLatin1(bytes.toBase64());
         QPixmap pix;
         pix.loadFromData(bytes);
-        if (m_promptInput) {
-            m_promptInput->showImagePreview(m_chatImagemBase64, QFileInfo(arq).fileName());
+        if (m_tabChatIA && m_tabChatIA->promptInput()) {
+            m_tabChatIA->promptInput()->showImagePreview(m_chatImagemBase64, QFileInfo(arq).fileName());
         }
         appendLog("Imagem anexada: " + QFileInfo(arq).fileName(), "success");
     }
@@ -3298,8 +2765,8 @@ void MainWindow::onAnexarImagemChat()
 void MainWindow::onRemoverImagemChat()
 {
     m_chatImagemBase64.clear();
-    if (m_promptInput) {
-        m_promptInput->hideImagePreview();
+    if (m_tabChatIA && m_tabChatIA->promptInput()) {
+        m_tabChatIA->promptInput()->hideImagePreview();
     }
 }
 
@@ -3314,48 +2781,35 @@ void MainWindow::onColarTrechoChat()
         return;
     }
 
-    if (m_promptInput) {
-        QString atual = m_promptInput->text();
+    if (m_tabChatIA && m_tabChatIA->promptInput()) {
+        QString atual = m_tabChatIA->promptInput()->text();
         if (!atual.isEmpty()) atual += "\n\n";
         atual += QString("Explicar este trecho: \"%1\"").arg(trecho);
-        m_promptInput->setText(atual);
-        m_promptInput->setFocus();
+        m_tabChatIA->promptInput()->setText(atual);
+        m_tabChatIA->promptInput()->setFocus();
     }
 }
 
 void MainWindow::onLimparChat()
 {
     m_chatHistoricoJson = QJsonArray();
-    m_chatHistorico->setHtml(
-        "<div style='color: #94a3b8; font-size: 13px; line-height: 1.5;'>"
-        "<b style='color: #60a5fa;'>Conversa reiniciada</b><br>"
-        "Historico limpo. Faca uma nova pergunta ou anexe um circuito."
-        "</div>"
-    );
+    if (m_tabChatIA) {
+        m_tabChatIA->resetarHistoricoVisual();
+    }
     appendLog("Historico do Assistente IA limpo.", "info");
 }
 
 void MainWindow::onEnviarChat()
 {
-    const QString texto = m_promptInput ? m_promptInput->text().trimmed() : QString();
+    PromptInputWidget *promptInput = m_tabChatIA ? m_tabChatIA->promptInput() : nullptr;
+    const QString texto = promptInput ? promptInput->text().trimmed() : QString();
     if (texto.isEmpty() && m_chatImagemBase64.isEmpty()) {
         return;
     }
 
-    // Adiciona pergunta do usuário na UI
-    QString userHtml = "<div style='margin-bottom: 12px; margin-top: 6px;'>"
-                       "<div style='font-size: 11px; font-weight: 600; color: #38bdf8; margin-bottom: 2px;'>Você</div>"
-                       "<div style='background-color: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 8px 10px; color: #f1f5f9; font-size: 13px; line-height: 1.4;'>";
-
-    if (!m_chatImagemBase64.isEmpty()) {
-        userHtml += "<div style='color: #93c5fd; font-size: 11px; margin-bottom: 4px;'>[Imagem anexada]</div>";
+    if (m_tabChatIA) {
+        m_tabChatIA->adicionarMensagemUsuario(texto, !m_chatImagemBase64.isEmpty());
     }
-    if (!texto.isEmpty()) {
-        userHtml += texto.toHtmlEscaped().replace("\n", "<br>");
-    }
-    userHtml += "</div></div>";
-
-    m_chatHistorico->append(userHtml);
 
     // Salva no histórico JSON
     QJsonObject userMsg;
@@ -3365,10 +2819,10 @@ void MainWindow::onEnviarChat()
 
     const QString imgB64 = m_chatImagemBase64;
     onRemoverImagemChat();
-    m_promptInput->clearInput();
+    if (promptInput) promptInput->clearInput();
 
-    if (m_promptInput) m_promptInput->setSendButtonBusy(true);
-    m_lblStatus->setText("Consultando Assistente IA...");
+    if (promptInput) promptInput->setSendButtonBusy(true);
+    if (m_tabConfiguracoes) m_tabConfiguracoes->setStatusText("Consultando Assistente IA...");
 
     m_timerRequisicaoIA.restart();
     if (m_badgeMetricasIA) {
@@ -3378,297 +2832,10 @@ void MainWindow::onEnviarChat()
     m_net->enviarMensagemChat(texto, imgB64, m_chatHistoricoJson, m_iaProvedor, m_iaApiKey, m_iaModelo);
 }
 
-static QString converterFormulaLatex(QString formula, bool isBlock)
-{
-    formula = formula.trimmed();
-    if (formula.startsWith("$$") && formula.endsWith("$$")) formula = formula.mid(2, formula.length() - 4).trimmed();
-    else if (formula.startsWith("$") && formula.endsWith("$")) formula = formula.mid(1, formula.length() - 2).trimmed();
-    else if (formula.startsWith("\\[") && formula.endsWith("\\]")) formula = formula.mid(2, formula.length() - 4).trimmed();
-    else if (formula.startsWith("\\(") && formula.endsWith("\\)")) formula = formula.mid(2, formula.length() - 4).trimmed();
-
-    formula = formula.toHtmlEscaped();
-
-    // 1. \text{...} ou \mathrm{...}
-    static const QRegularExpression reText(R"(\\text\{([^}]+)\})");
-    formula.replace(reText, "<span style='font-style:normal;font-family:sans-serif;'>\\1</span>");
-    static const QRegularExpression reMathrm(R"(\\mathrm\{([^}]+)\})");
-    formula.replace(reMathrm, "<span style='font-style:normal;font-family:sans-serif;'>\\1</span>");
-
-    // 2. \frac{A}{B}
-    static const QRegularExpression reFrac(R"(\\frac\{([^}]+)\}\{([^}]+)\})");
-    if (isBlock) {
-        formula.replace(reFrac, 
-            "<table style='display:inline-table;vertical-align:middle;border-collapse:collapse;margin:0 4px;font-size:95%;'>"
-            "<tr><td style='border-bottom:1px solid #94a3b8;text-align:center;padding:0 4px;'>\\1</td></tr>"
-            "<tr><td style='text-align:center;padding:0 4px;'>\\2</td></tr>"
-            "</table>");
-    } else {
-        formula.replace(reFrac, "(\\1 / \\2)");
-    }
-
-    // 3. Símbolos gregos
-    formula.replace("\\alpha", "&alpha;");
-    formula.replace("\\beta", "&beta;");
-    formula.replace("\\gamma", "&gamma;");
-    formula.replace("\\Gamma", "&Gamma;");
-    formula.replace("\\delta", "&delta;");
-    formula.replace("\\Delta", "&Delta;");
-    formula.replace("\\epsilon", "&epsilon;");
-    formula.replace("\\theta", "&theta;");
-    formula.replace("\\lambda", "&lambda;");
-    formula.replace("\\Lambda", "&Lambda;");
-    formula.replace("\\mu", "&mu;");
-    formula.replace("\\pi", "&pi;");
-    formula.replace("\\Pi", "&Pi;");
-    formula.replace("\\sigma", "&sigma;");
-    formula.replace("\\Sigma", "&Sigma;");
-    formula.replace("\\tau", "&tau;");
-    formula.replace("\\phi", "&phi;");
-    formula.replace("\\Phi", "&Phi;");
-    formula.replace("\\omega", "&omega;");
-    formula.replace("\\Omega", "&Omega;");
-
-    // 4. Operadores e relações
-    static const QRegularExpression reLatexImplies(R"([/\\]+(?:implies|Rightarrow)\b)", QRegularExpression::CaseInsensitiveOption);
-    formula.replace(reLatexImplies, "&rArr;");
-
-    static const QRegularExpression reLatexIff(R"([/\\]+(?:iff|Leftrightarrow)\b)", QRegularExpression::CaseInsensitiveOption);
-    formula.replace(reLatexIff, "&hArr;");
-
-    static const QRegularExpression reLatexLeftArrow(R"([/\\]+Leftarrow\b)", QRegularExpression::CaseInsensitiveOption);
-    formula.replace(reLatexLeftArrow, "&lArr;");
-
-    static const QRegularExpression reLatexTo(R"([/\\]+(?:to|rightarrow)\b)", QRegularExpression::CaseInsensitiveOption);
-    formula.replace(reLatexTo, "&rarr;");
-
-    static const QRegularExpression reLatexLeft(R"([/\\]+leftarrow\b)", QRegularExpression::CaseInsensitiveOption);
-    formula.replace(reLatexLeft, "&larr;");
-
-    formula.replace("\\equiv", "&equiv;");
-    formula.replace("\\therefore", "&there4;");
-    formula.replace("\\sum", "<span style='font-size:120%;font-weight:bold;'>&sum;</span>");
-    formula.replace("\\int", "<span style='font-size:120%;font-weight:bold;'>&int;</span>");
-    formula.replace("\\approx", "&asymp;");
-    formula.replace("\\leq", "&le;");
-    formula.replace("\\le", "&le;");
-    formula.replace("\\geq", "&ge;");
-    formula.replace("\\ge", "&ge;");
-    formula.replace("\\neq", "&ne;");
-    formula.replace("\\ne", "&ne;");
-    formula.replace("\\pm", "&plusmn;");
-    formula.replace("\\times", "&times;");
-    formula.replace("\\cdot", "&sdot;");
-    formula.replace("\\infty", "&infin;");
-    formula.replace("\\partial", "&part;");
-    formula.replace("\\sqrt", "&radic;");
-
-    // 5. Subscritos e sobrescritos com chaves
-    static const QRegularExpression reSubBrace(R"(_\{([^}]+)\})");
-    formula.replace(reSubBrace, "<sub>\\1</sub>");
-    static const QRegularExpression reSupBrace(R"(\^\{([^}]+)\})");
-    formula.replace(reSupBrace, "<sup>\\1</sup>");
-
-    // 6. Subscritos e sobrescritos simples
-    static const QRegularExpression reSubSimple(R"(_([a-zA-Z0-9]))");
-    formula.replace(reSubSimple, "<sub>\\1</sub>");
-    static const QRegularExpression reSupSimple(R"(\^([a-zA-Z0-9]))");
-    formula.replace(reSupSimple, "<sup>\\1</sup>");
-
-    if (isBlock) {
-        return QString(
-            "<div style='margin: 8px 0; padding: 10px 14px; background-color: #161b26; "
-            "border: 1px solid #2d3748; border-left: 3px solid #38bdf8; border-radius: 6px; "
-            "text-align: center; font-family: \"DejaVu Serif\", \"Cambria Math\", \"Times New Roman\", serif; "
-            "font-size: 15px; color: #38bdf8; font-weight: 500;'>"
-            "%1"
-            "</div>"
-        ).arg(formula);
-    } else {
-        return QString(
-            "<span style='font-family: \"DejaVu Serif\", \"Cambria Math\", \"Times New Roman\", serif; "
-            "font-style: italic; color: #38bdf8; background-color: #17202f; padding: 1px 5px; "
-            "border-radius: 4px; border: 1px solid #253347; font-size: 13px;'>"
-            "%1"
-            "</span>"
-        ).arg(formula);
-    }
-}
-
-static QString converterTabelaMarkdown(const QString &tableBlock)
-{
-    QStringList lines = tableBlock.trimmed().split('\n');
-    if (lines.size() < 2) return tableBlock;
-
-    QString html = "<table style='width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; background-color: #141822; border: 1px solid #2d3748; border-radius: 6px;'>";
-
-    // Cabeçalho
-    QString line0 = lines[0].trimmed();
-    if (line0.startsWith('|')) line0 = line0.mid(1);
-    if (line0.endsWith('|')) line0.chop(1);
-    QStringList headers = line0.split('|');
-    html += "<tr style='background-color: #1e2638;'>";
-    for (const QString &h : headers) {
-        html += QString("<th style='border: 1px solid #2d3748; padding: 7px 10px; color: #93c5fd; text-align: left; font-weight: 600;'>%1</th>").arg(h.trimmed().toHtmlEscaped());
-    }
-    html += "</tr>";
-
-    int startRow = 1;
-    if (lines.size() > 1 && lines[1].contains("---")) {
-        startRow = 2;
-    }
-
-    for (int r = startRow; r < lines.size(); ++r) {
-        QString rowLine = lines[r].trimmed();
-        if (rowLine.isEmpty()) continue;
-        if (rowLine.startsWith('|')) rowLine = rowLine.mid(1);
-        if (rowLine.endsWith('|')) rowLine.chop(1);
-        QStringList cells = rowLine.split('|');
-        html += "<tr style='border-bottom: 1px solid #242c3d;'>";
-        for (const QString &c : cells) {
-            html += QString("<td style='border: 1px solid #242c3d; padding: 6px 10px; color: #e2e8f0;'>%1</td>").arg(c.trimmed().toHtmlEscaped());
-        }
-        html += "</tr>";
-    }
-
-    html += "</table>";
-    return html;
-}
-
-static QString renderizarMarkdownELatex(const QString &texto)
-{
-    QString result = texto;
-
-    // 1. Extrair Blocos de Código ``` ... ```
-    QStringList codeBlocks;
-    static const QRegularExpression reCodeBlock(R"(```([a-zA-Z0-9_-]*)\n([\s\S]*?)```)");
-    auto matchCode = reCodeBlock.match(result);
-    while (matchCode.hasMatch()) {
-        const QString code = matchCode.captured(2).toHtmlEscaped();
-        const QString htmlCode = QString(
-            "<pre style='background-color: #151821; border: 1px solid #282f3f; border-radius: 6px; padding: 10px; font-family: monospace; font-size: 12px; color: #38bdf8; overflow-x: auto;'><code>%1</code></pre>"
-        ).arg(code);
-        const QString token = QString("@@CODE_BLOCK_%1@@").arg(codeBlocks.size());
-        codeBlocks.append(htmlCode);
-        result.replace(matchCode.capturedStart(), matchCode.capturedLength(), token);
-        matchCode = reCodeBlock.match(result);
-    }
-
-    // 2. Extrair Fórmulas em Bloco $$ ... $$ e \[ ... \]
-    QStringList mathBlocks;
-    static const QRegularExpression reBlockMath(R"(\$\$([^$]+?)\$\$|\\\[([\s\S]*?)\\\])");
-    auto matchBlockMath = reBlockMath.match(result);
-    while (matchBlockMath.hasMatch()) {
-        QString formula = matchBlockMath.captured(1);
-        if (formula.isEmpty()) formula = matchBlockMath.captured(2);
-        const QString htmlMath = converterFormulaLatex(formula, true);
-        const QString token = QString("@@MATH_BLOCK_%1@@").arg(mathBlocks.size());
-        mathBlocks.append(htmlMath);
-        result.replace(matchBlockMath.capturedStart(), matchBlockMath.capturedLength(), token);
-        matchBlockMath = reBlockMath.match(result);
-    }
-
-    // 3. Extrair Fórmulas Inline $ ... $ e \( ... \)
-    QStringList mathInlines;
-    static const QRegularExpression reInlineMath(R"((?<!\$)\$([^$\n]+?)\$(?!\$)|\\\(([\s\S]*?)\\\))");
-    auto matchInlineMath = reInlineMath.match(result);
-    while (matchInlineMath.hasMatch()) {
-        QString formula = matchInlineMath.captured(1);
-        if (formula.isEmpty()) formula = matchInlineMath.captured(2);
-        const QString htmlMath = converterFormulaLatex(formula, false);
-        const QString token = QString("@@MATH_INLINE_%1@@").arg(mathInlines.size());
-        mathInlines.append(htmlMath);
-        result.replace(matchInlineMath.capturedStart(), matchInlineMath.capturedLength(), token);
-        matchInlineMath = reInlineMath.match(result);
-    }
-
-    // 4. Extrair Tabelas Markdown
-    QStringList tableBlocks;
-    static const QRegularExpression reTable(R"((?:^[ \t]*\|.+?\|[ \t]*\n?){2,})", QRegularExpression::MultilineOption);
-    auto matchTable = reTable.match(result);
-    while (matchTable.hasMatch()) {
-        const QString tblRaw = matchTable.captured(0);
-        const QString htmlTbl = converterTabelaMarkdown(tblRaw);
-        const QString token = QString("@@TABLE_BLOCK_%1@@").arg(tableBlocks.size());
-        tableBlocks.append(htmlTbl);
-        result.replace(matchTable.capturedStart(), matchTable.capturedLength(), token);
-        matchTable = reTable.match(result);
-    }
-
-    // 5. Escapar caracteres HTML no restante do texto
-    result = result.toHtmlEscaped();
-
-    // 6. Cabeçalhos Markdown
-    static const QRegularExpression reH3(R"(^###[ \t]+([^\n]+))", QRegularExpression::MultilineOption);
-    result.replace(reH3, "<div style='font-size: 14px; font-weight: 700; color: #c084fc; margin-top: 10px; margin-bottom: 4px;'>\\1</div>");
-    static const QRegularExpression reH2(R"(^##[ \t]+([^\n]+))", QRegularExpression::MultilineOption);
-    result.replace(reH2, "<div style='font-size: 15px; font-weight: 700; color: #a78bfa; margin-top: 12px; margin-bottom: 6px;'>\\1</div>");
-    static const QRegularExpression reH1(R"(^#[ \t]+([^\n]+))", QRegularExpression::MultilineOption);
-    result.replace(reH1, "<div style='font-size: 16px; font-weight: 700; color: #f1f5f9; margin-top: 14px; margin-bottom: 6px;'>\\1</div>");
-
-    // Linha horizontal
-    static const QRegularExpression reHr(R"(^---[ \t]*$|^\*\*\*[ \t]*$)", QRegularExpression::MultilineOption);
-    result.replace(reHr, "<hr style='border: 0; border-top: 1px solid #282f3d; margin: 10px 0;'>");
-
-    // Negrito e Itálico
-    static const QRegularExpression reBold(R"(\*\*([^*]+)\*\*)");
-    result.replace(reBold, "<strong style='color: #f8fafc;'>\\1</strong>");
-    static const QRegularExpression reItalic(R"((?<!\*)\*([^*\n]+)\*(?!\*))");
-    result.replace(reItalic, "<em>\\1</em>");
-
-    // Código inline
-    static const QRegularExpression reInlineCode(R"(`([^`]+)`)");
-    result.replace(reInlineCode, "<code style='background-color: #272a33; color: #38bdf8; padding: 2px 5px; border-radius: 4px; font-family: monospace;'>\\1</code>");
-
-    // Listas com marcadores (* ou -)
-    static const QRegularExpression reBullet(R"(^[ \t]*[\*\-][ \t]+([^\n]+))", QRegularExpression::MultilineOption);
-    result.replace(reBullet, "<div style='margin-left: 12px; margin-bottom: 3px;'>• \\1</div>");
-
-    // Listas numeradas (1. 2. etc)
-    static const QRegularExpression reNumList(R"(^[ \t]*([0-9]+)\.[ \t]+([^\n]+))", QRegularExpression::MultilineOption);
-    result.replace(reNumList, "<div style='margin-left: 12px; margin-bottom: 3px;'><b style='color: #a78bfa;'>\\1.</b> \\2</div>");
-
-    // Quebras de linha
-    result.replace("\n\n", "<br><br>");
-    result.replace("\n", "<br>");
-
-    // Substituições de operadores lógicos comuns no texto (ex: \implies, /implies, \iff, /iff, etc.)
-    static const QRegularExpression reImpliesText(R"([/\\]+(?:implies|Rightarrow)\b)", QRegularExpression::CaseInsensitiveOption);
-    result.replace(reImpliesText, "<span style='font-size:115%; color:#38bdf8;'>&nbsp;&rArr;&nbsp;</span>");
-
-    static const QRegularExpression reIffText(R"([/\\]+(?:iff|Leftrightarrow)\b)", QRegularExpression::CaseInsensitiveOption);
-    result.replace(reIffText, "<span style='font-size:115%; color:#38bdf8;'>&nbsp;&hArr;&nbsp;</span>");
-
-    static const QRegularExpression reToText(R"([/\\]+(?:to|rightarrow)\b)", QRegularExpression::CaseInsensitiveOption);
-    result.replace(reToText, "<span style='font-size:115%; color:#38bdf8;'>&nbsp;&rarr;&nbsp;</span>");
-
-    // Também suporta setas textuais comuns como ==> ou -->
-    static const QRegularExpression reArrowDbl(R"((?<=\s)==&gt;(?=\s)|(?<=\s)=&gt;(?=\s))");
-    result.replace(reArrowDbl, "<span style='font-size:115%; color:#38bdf8;'>&nbsp;&rArr;&nbsp;</span>");
-
-    static const QRegularExpression reArrowSgl(R"((?<=\s)--&gt;(?=\s)|(?<=\s)-&gt;(?=\s))");
-    result.replace(reArrowSgl, "<span style='font-size:115%; color:#38bdf8;'>&nbsp;&rarr;&nbsp;</span>");
-
-    // 7. Reinserir Blocos Protegidos
-    for (int i = 0; i < tableBlocks.size(); ++i) {
-        result.replace(QString("@@TABLE_BLOCK_%1@@").arg(i), tableBlocks[i]);
-    }
-    for (int i = 0; i < mathBlocks.size(); ++i) {
-        result.replace(QString("@@MATH_BLOCK_%1@@").arg(i), mathBlocks[i]);
-    }
-    for (int i = 0; i < mathInlines.size(); ++i) {
-        result.replace(QString("@@MATH_INLINE_%1@@").arg(i), mathInlines[i]);
-    }
-    for (int i = 0; i < codeBlocks.size(); ++i) {
-        result.replace(QString("@@CODE_BLOCK_%1@@").arg(i), codeBlocks[i]);
-    }
-
-    return result;
-}
-
 void MainWindow::onChatRespostaResultado(const QString &resposta, const QString &provedor, const QString &modelo)
 {
-    if (m_promptInput) m_promptInput->setSendButtonBusy(false);
-    m_lblStatus->setText("Pronto");
+    if (m_tabChatIA && m_tabChatIA->promptInput()) m_tabChatIA->promptInput()->setSendButtonBusy(false);
+    if (m_tabConfiguracoes) m_tabConfiguracoes->setStatusText("Pronto");
 
     const qint64 elapsedMs = m_timerRequisicaoIA.isValid() ? m_timerRequisicaoIA.elapsed() : 0;
     if (m_badgeMetricasIA && elapsedMs > 0) {
@@ -3681,18 +2848,9 @@ void MainWindow::onChatRespostaResultado(const QString &resposta, const QString 
     botMsg["content"] = resposta;
     m_chatHistoricoJson.append(botMsg);
 
-    // Formata resposta com suporte a LaTeX, tabelas e Markdown avançado
-    const QString formatted = renderizarMarkdownELatex(resposta);
-
-    QString botHtml = QString(
-        "<div style='margin-bottom: 16px; margin-top: 6px;'>"
-        "<div style='font-size: 11px; font-weight: 600; color: #a78bfa; margin-bottom: 2px;'>Assistente Técnico (%1: %2)</div>"
-        "<div style='background-color: #171b24; border: 1px solid #282f3d; border-left: 3px solid #8b5cf6; border-radius: 8px; padding: 10px 12px; color: #e2e8f0; font-size: 13px; line-height: 1.5;'>%3</div>"
-        "</div>"
-    ).arg(provedor.toUpper(), modelo, formatted);
-
-    m_chatHistorico->append(botHtml);
-    m_chatHistorico->verticalScrollBar()->setValue(m_chatHistorico->verticalScrollBar()->maximum());
+    if (m_tabChatIA) {
+        m_tabChatIA->adicionarMensagemAssistente(resposta, provedor, modelo);
+    }
     if (m_quickLookupPopover && m_quickLookupPopover->isVisible()) {
         m_quickLookupPopover->atualizarRespostaChat(resposta, modelo);
     }
@@ -3783,12 +2941,12 @@ void MainWindow::onConfigurarIA()
         }
         salvarConfiguracoes();
 
-        if (m_lblModeloAtivoChat) {
-            m_lblModeloAtivoChat->setText(m_iaModelo);
+        if (m_tabChatIA && m_tabChatIA->lblModeloAtivoChat()) {
+            m_tabChatIA->lblModeloAtivoChat()->setText(m_iaModelo);
         }
-        if (m_comboChatIA) {
-            const int idx = m_comboChatIA->findData(m_iaProvedor);
-            if (idx >= 0) m_comboChatIA->setCurrentIndex(idx);
+        if (m_tabChatIA && m_tabChatIA->comboChatIA()) {
+            const int idx = m_tabChatIA->comboChatIA()->findData(m_iaProvedor);
+            if (idx >= 0) m_tabChatIA->comboChatIA()->setCurrentIndex(idx);
         }
         atualizarBadgeModeloAtivo();
         appendLog("Configurações de IA salvas.", "success");
@@ -3945,6 +3103,15 @@ void MainWindow::verificarEIniciarBackend()
     }
 
     m_backendProcess->setWorkingDirectory(workingDir);
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    if (!m_whisperModelTier.isEmpty()) {
+        env.insert("WHISPER_MODEL", m_whisperModelTier);
+    }
+    if (!m_ollamaModelTier.isEmpty()) {
+        env.insert("OLLAMA_MODEL", m_ollamaModelTier);
+    }
+    m_backendProcess->setProcessEnvironment(env);
+
     appendLog(QString("Iniciando motor de IA na porta %1...").arg(m_backendPort), "info");
     args << "--port" << QString::number(m_backendPort)
          << "--ppid" << QString::number(QCoreApplication::applicationPid());
@@ -3972,177 +3139,6 @@ void MainWindow::pararBackend()
         m_backendProcess->deleteLater();
         m_backendProcess = nullptr;
     }
-}
-
-// ═════════════════════════════════════════════════════════════════════════════
-// Aba: Bloco de Notas / Anotações
-// ═════════════════════════════════════════════════════════════════════════════
-
-void MainWindow::onSalvarAnotacoes()
-{
-    if (!m_txtAnotacoes) return;
-
-    QString caminho = m_caminhoArquivoNota;
-    if (caminho.isEmpty()) {
-        caminho = QFileDialog::getSaveFileName(
-            this,
-            "Salvar Anotações",
-            QDir::homePath() + "/MinhasAnotacoes.html",
-            "Documento HTML com formatação (*.html);;Texto Puro (*.txt);;Todos os Arquivos (*.*)"
-        );
-    }
-    if (caminho.isEmpty()) return;
-
-    QFile file(caminho);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, "Erro ao Salvar", "Não foi possível gravar no arquivo:\n" + file.errorString());
-        return;
-    }
-
-    QTextStream out(&file);
-    if (caminho.endsWith(".txt", Qt::CaseInsensitive)) {
-        out << m_txtAnotacoes->toPlainText();
-    } else {
-        out << m_txtAnotacoes->toHtml();
-    }
-    file.close();
-
-    m_caminhoArquivoNota = caminho;
-    if (m_lblArquivoNota) {
-        m_lblArquivoNota->setText(QFileInfo(caminho).fileName());
-    }
-    appendLog(QString("Anotações salvas com sucesso em %1").arg(QFileInfo(caminho).fileName()), "success");
-}
-
-void MainWindow::onAbrirAnotacoes()
-{
-    if (!m_txtAnotacoes) return;
-
-    const QString caminho = QFileDialog::getOpenFileName(
-        this,
-        "Abrir Anotações",
-        QDir::homePath(),
-        "Arquivos Suportados (*.html *.htm *.txt *.md);;Documentos HTML (*.html *.htm);;Texto Puro (*.txt *.md);;Todos os Arquivos (*.*)"
-    );
-    if (caminho.isEmpty()) return;
-
-    QFile file(caminho);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QMessageBox::warning(this, "Erro ao Abrir", "Não foi possível abrir o arquivo:\n" + file.errorString());
-        return;
-    }
-
-    const QString conteudo = QString::fromUtf8(file.readAll());
-    file.close();
-
-    if (caminho.endsWith(".html", Qt::CaseInsensitive) || caminho.endsWith(".htm", Qt::CaseInsensitive)) {
-        m_txtAnotacoes->setHtml(conteudo);
-    } else {
-        m_txtAnotacoes->setPlainText(conteudo);
-    }
-
-    m_caminhoArquivoNota = caminho;
-    if (m_lblArquivoNota) {
-        m_lblArquivoNota->setText(QFileInfo(caminho).fileName());
-    }
-    appendLog(QString("Anotações carregadas: %1").arg(QFileInfo(caminho).fileName()), "info");
-}
-
-void MainWindow::onLimparAnotacoes()
-{
-    if (!m_txtAnotacoes) return;
-    if (!m_txtAnotacoes->toPlainText().trimmed().isEmpty()) {
-        const auto resp = QMessageBox::question(
-            this,
-            "Novo Bloco de Notas",
-            "Deseja limpar as anotações atuais e começar uma folha em branco?",
-            QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::No
-        );
-        if (resp != QMessageBox::Yes) return;
-    }
-    m_txtAnotacoes->clear();
-    m_caminhoArquivoNota.clear();
-    if (m_lblArquivoNota) {
-        m_lblArquivoNota->setText("Novo Documento");
-    }
-}
-
-void MainWindow::onCopiarAnotacoes()
-{
-    if (!m_txtAnotacoes) return;
-    QClipboard *clip = QGuiApplication::clipboard();
-    if (clip) {
-        clip->setText(m_txtAnotacoes->toPlainText());
-        appendLog("Anotações copiadas para a área de transferência.", "info");
-    }
-}
-
-void MainWindow::onMudarFonteAnotacoes(const QString &familia)
-{
-    if (!m_txtAnotacoes) return;
-    m_txtAnotacoes->setFontFamily(familia);
-}
-
-void MainWindow::onMudarTamanhoAnotacoes(int pt)
-{
-    if (!m_txtAnotacoes) return;
-    m_txtAnotacoes->setFontPointSize(pt);
-}
-
-void MainWindow::onAumentarFonteAnotacoes()
-{
-    if (!m_spinTamanhoNota) return;
-    m_spinTamanhoNota->setValue(std::min(m_spinTamanhoNota->value() + 1, 36));
-}
-
-void MainWindow::onDiminuirFonteAnotacoes()
-{
-    if (!m_spinTamanhoNota) return;
-    m_spinTamanhoNota->setValue(std::max(m_spinTamanhoNota->value() - 1, 9));
-}
-
-void MainWindow::onToggleBoldAnotacoes()
-{
-    if (!m_txtAnotacoes || !m_btnBoldNota) return;
-    m_txtAnotacoes->setFontWeight(m_btnBoldNota->isChecked() ? QFont::Bold : QFont::Normal);
-}
-
-void MainWindow::onToggleItalicAnotacoes()
-{
-    if (!m_txtAnotacoes || !m_btnItalicNota) return;
-    m_txtAnotacoes->setFontItalic(m_btnItalicNota->isChecked());
-}
-
-void MainWindow::onToggleUnderlineAnotacoes()
-{
-    if (!m_txtAnotacoes || !m_btnUnderlineNota) return;
-    m_txtAnotacoes->setFontUnderline(m_btnUnderlineNota->isChecked());
-}
-
-void MainWindow::onEscolherCorAnotacoes()
-{
-    if (!m_txtAnotacoes) return;
-    const QColor inicial = m_txtAnotacoes->textColor().isValid() ? m_txtAnotacoes->textColor() : QColor("#f1f5f9");
-    const QColor escolhida = QColorDialog::getColor(inicial, this, "Selecionar Cor do Texto");
-    if (escolhida.isValid()) {
-        m_txtAnotacoes->setTextColor(escolhida);
-        if (m_btnCorNota) {
-            m_btnCorNota->setStyleSheet(QString(
-                "QPushButton { background-color: %1; color: %2; font-weight: 600; border: 1px solid %1; border-radius: 4px; padding: 3px 10px; font-size: 11px; }"
-                "QPushButton:hover { opacity: 0.9; }"
-            ).arg(escolhida.name(), escolhida.lightness() > 140 ? "#000000" : "#ffffff"));
-        }
-    }
-}
-
-void MainWindow::onAtualizarContadorNotas()
-{
-    if (!m_txtAnotacoes || !m_lblStatusNota) return;
-    const QString texto = m_txtAnotacoes->toPlainText().trimmed();
-    const int chars = texto.length();
-    const int palavras = texto.isEmpty() ? 0 : texto.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts).count();
-    m_lblStatusNota->setText(QString("%1 palavras | %2 caracteres").arg(palavras).arg(chars));
 }
 
 void MainWindow::registrarLancadorLinux()
@@ -4184,6 +3180,7 @@ void MainWindow::registrarLancadorLinux()
         out << "Terminal=false\n";
         out << "Categories=Office;Viewer;Education;Science;\n";
         out << "MimeType=application/pdf;\n";
+        out << "StartupWMClass=Vellum\n";
         out << "StartupNotify=true\n";
         file.close();
 

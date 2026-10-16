@@ -32,6 +32,16 @@ set(SOURCES
     src/QuickLookupPopover.cpp
     src/SelectionOverlayWidget.h
     src/SelectionOverlayWidget.cpp
+    src/TranslationWidget.h
+    src/TranslationWidget.cpp
+    src/SpeechTutorWidget.h
+    src/SpeechTutorWidget.cpp
+    src/AiAssistantWidget.h
+    src/AiAssistantWidget.cpp
+    src/NotesWidget.h
+    src/NotesWidget.cpp
+    src/SettingsWidget.h
+    src/SettingsWidget.cpp
     resources.qrc
 )
 
@@ -49,6 +59,11 @@ set(HEADERS
     src/FloatingHUD.h
     src/QuickLookupPopover.h
     src/SelectionOverlayWidget.h
+    src/TranslationWidget.h
+    src/SpeechTutorWidget.h
+    src/AiAssistantWidget.h
+    src/NotesWidget.h
+    src/SettingsWidget.h
 )
 
 qt_add_executable(Vellum
@@ -71,17 +86,11 @@ set_target_properties(Vellum PROPERTIES
     OUTPUT_NAME "Vellum"
 )
 
-# Compatibilidade no Linux com scripts anteriores e registro no lançador do sistema
+# Compatibilidade no Linux com scripts anteriores
 if(UNIX AND NOT APPLE)
     add_custom_command(TARGET Vellum POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E create_symlink $<TARGET_FILE_NAME:Vellum> ${CMAKE_BINARY_DIR}/EnsinadorDeIngles
         COMMENT "Criando link simbolico de compatibilidade EnsinadorDeIngles -> Vellum"
-    )
-    add_custom_command(TARGET Vellum POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$ENV{HOME}/.local/share/applications"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/../instaladores_e_scripts/vellum.desktop" "$ENV{HOME}/.local/share/applications/vellum.desktop"
-        COMMAND update-desktop-database "$ENV{HOME}/.local/share/applications" || true
-        COMMENT "Instalando/atualizando o lancador Linux (~/.local/share/applications/vellum.desktop)"
     )
 endif()
 
@@ -129,6 +138,10 @@ add_executable(tst_QuickLookupPopover
     tests/tst_QuickLookupPopover.cpp
     src/QuickLookupPopover.cpp
     src/QuickLookupPopover.h
+    src/AiAssistantWidget.cpp
+    src/AiAssistantWidget.h
+    src/PromptInputWidget.cpp
+    src/PromptInputWidget.h
     resources.qrc
 )
 

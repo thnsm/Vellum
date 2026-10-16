@@ -41,6 +41,11 @@ class TitleBar;
 class FloatingHUD;
 class QuickLookupPopover;
 class SelectionOverlayWidget;
+class TranslationWidget;
+class SpeechTutorWidget;
+class AiAssistantWidget;
+class NotesWidget;
+class SettingsWidget;
 
 enum class ModoVisualizacao {
     UmaPagina,     // 1 página por vez
@@ -100,7 +105,7 @@ private slots:
     void onPararAudio();
     void onGravarVozTutor();
     void onFalaIniciada(const QString &voz);
-    void onAvaliacaoPronunciaResultado(int nota, const QString &feedback, const QString &textoFalado, const QStringList &palavrasAusentes);
+    void onAvaliacaoPronunciaResultado(int nota, const QString &feedback, const QString &textoFalado, const QStringList &palavrasAusentes, const QString &htmlDestacado = QString());
 
     // ── Assistente IA & Chat ──────────────────────────────────────────────
     void onEnviarChat();
@@ -144,31 +149,11 @@ private slots:
     // ── Configurações e Desempenho ────────────────────────────────────────
     void onPerfilAlterado(int index);
 
-    // ── Bloco de Notas / Anotações ────────────────────────────────────────
-    void onSalvarAnotacoes();
-    void onAbrirAnotacoes();
-    void onLimparAnotacoes();
-    void onCopiarAnotacoes();
-    void onMudarFonteAnotacoes(const QString &familia);
-    void onMudarTamanhoAnotacoes(int pt);
-    void onAumentarFonteAnotacoes();
-    void onDiminuirFonteAnotacoes();
-    void onToggleBoldAnotacoes();
-    void onToggleItalicAnotacoes();
-    void onToggleUnderlineAnotacoes();
-    void onEscolherCorAnotacoes();
-    void onAtualizarContadorNotas();
-
 private:
     QMenuBar* setupMenuBar();
     void setupUi();
     void registrarLancadorLinux();
     QWidget* criarBarraVisualizacao();
-    QWidget* criarAbaTraducao();
-    QWidget* criarAbaTutor();
-    QWidget* criarAbaChatIA();
-    QWidget* criarAbaAnotacoes();
-    QWidget* criarAbaConfiguracoes();
     void setupStyleSheet();
     void connectSignals();
 
@@ -186,6 +171,7 @@ private:
     int  obterPaginaVisivelNoModoContinuo() const;
 
     void capturarRegiaoRubberBand();
+    void dispararTraducaoTexto(const QString &textoEn, const QByteArray &imagemB64 = QByteArray());
 
     void appendLog(const QString &mensagem, const QString &tipo = "info");
     void setButtonBusy(QPushButton *btn, bool busy);
@@ -232,11 +218,12 @@ private:
     TitleBar        *m_titleBar       = nullptr;
     QMenuBar        *m_customMenuBar  = nullptr;
 
-    QWidget         *m_tabTraducao    = nullptr;
-    QWidget         *m_tabTutor       = nullptr;
-    QWidget         *m_tabChatIA      = nullptr;
-    QWidget         *m_tabAnotacoes   = nullptr;
-    QWidget         *m_tabConfiguracoes = nullptr;
+    TranslationWidget *m_tabTraducao      = nullptr;
+    SpeechTutorWidget *m_tabTutor         = nullptr;
+    AiAssistantWidget *m_tabChatIA        = nullptr;
+    NotesWidget       *m_tabAnotacoes     = nullptr;
+    SettingsWidget    *m_tabConfiguracoes = nullptr;
+    ThemeManager      *m_themeManager     = nullptr;
 
     FloatingHUD         *m_floatingHud        = nullptr;
     QuickLookupPopover  *m_quickLookupPopover = nullptr;
@@ -264,7 +251,6 @@ private:
 
     // ── Seleção Livre e Retangular ─────────────────────────────────────────
     SelectionOverlayWidget *m_overlaySelecao = nullptr;
-    QComboBox              *m_comboFormatoSelecao = nullptr;
 
     // ── Controle de Atalhos em Tela Cheia (1º toque: seleção/popover; 2º toque: painel)
     int                     m_ultimoAtalhoTelaCheia = -1;
@@ -303,66 +289,6 @@ private:
     QPushButton     *m_btnAjustarLarg = nullptr;
     QPushButton     *m_btnAjustarPag  = nullptr;
     QPushButton     *m_btnTelaCheia   = nullptr;
-
-    // ── Aba 1: Tradução ───────────────────────────────────────────────────
-    QPushButton       *m_btnModoCaptura          = nullptr;
-    QPushButton       *m_btnTraduzir             = nullptr;
-    QPushButton       *m_btnCopiarTraducao       = nullptr;
-    QCheckBox         *m_chkTraducaoAuto         = nullptr;
-    QTextEdit         *m_txtTraducaoOriginalEn   = nullptr;
-    QPushButton       *m_btnRetraduzirTexto      = nullptr;
-    QTimer            *m_timerDebounceTraducaoAba = nullptr;
-    PromptInputWidget *m_promptTraducao          = nullptr;
-
-    // ── Aba 2: Tutor & Pronúncia ──────────────────────────────────────────
-    QComboBox       *m_comboVoz          = nullptr;
-    QComboBox       *m_comboVelocidade   = nullptr;
-    QComboBox       *m_comboNivelTutor   = nullptr;
-    QPushButton     *m_btnOuvir          = nullptr;
-    QPushButton     *m_btnPararAudio     = nullptr;
-    QPushButton     *m_btnGravar         = nullptr;
-    QProgressBar    *m_barAcuracia       = nullptr;
-    QLabel          *m_lblAcuracia       = nullptr;
-    PromptInputWidget *m_promptTextoTutor = nullptr;
-    QTextEdit       *m_txtFeedbackTutor  = nullptr;
-
-    // ── Aba 3: Assistente IA & Chat ──────────────────────────────────────
-    QTextBrowser    *m_chatHistorico     = nullptr;
-    PromptInputWidget *m_promptInput     = nullptr;
-    ThemeManager      *m_themeManager    = nullptr;
-    QLabel          *m_lblModeloAtivoChat= nullptr;
-    QPushButton     *m_btnConfigurarIA   = nullptr;
-    QPushButton     *m_btnLimparChat     = nullptr;
-    QComboBox       *m_comboChatIA       = nullptr;  // seletor rapido de IA no chat
-
-    // ── Aba 4: Bloco de Notas / Anotações ─────────────────────────────────
-    QTextEdit       *m_txtAnotacoes      = nullptr;
-    QPushButton     *m_btnNovoNota       = nullptr;
-    QPushButton     *m_btnAbrirNota      = nullptr;
-    QPushButton     *m_btnSalvarNota     = nullptr;
-    QPushButton     *m_btnCopiarNota     = nullptr;
-    QComboBox       *m_comboFonteNota    = nullptr;
-    QSpinBox        *m_spinTamanhoNota   = nullptr;
-    QPushButton     *m_btnFonteMaisNota  = nullptr;
-    QPushButton     *m_btnFonteMenosNota = nullptr;
-    QPushButton     *m_btnBoldNota       = nullptr;
-    QPushButton     *m_btnItalicNota     = nullptr;
-    QPushButton     *m_btnUnderlineNota  = nullptr;
-    QPushButton     *m_btnCorNota        = nullptr;
-    QLabel          *m_lblStatusNota     = nullptr;
-    QLabel          *m_lblArquivoNota    = nullptr;
-    QString          m_caminhoArquivoNota;
-
-    // ── Aba 5: Desempenho & Layout ────────────────────────────────────────
-    QComboBox       *m_comboPerfil       = nullptr;
-    QComboBox       *m_comboTema         = nullptr;
-    QPushButton     *m_btnSalvarLayout   = nullptr;
-    QPushButton     *m_btnRestaurarLayout= nullptr;
-    QPushButton     *m_btnProporcao100   = nullptr;
-    QPushButton     *m_btnProporcao70    = nullptr;
-    QPushButton     *m_btnProporcao50    = nullptr;
-    QTextEdit       *m_logBox            = nullptr;
-    QLabel          *m_lblStatus         = nullptr;
 
     // ── Badge de Modelo e Progresso Numérico Minimalista ─────────────────
     void atualizarBadgeModeloAtivo();

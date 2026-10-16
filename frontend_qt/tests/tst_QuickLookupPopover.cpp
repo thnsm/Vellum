@@ -31,6 +31,31 @@ private slots:
         QVERIFY(grip != nullptr);
         QVERIFY(popover.minimumWidth() >= 360);
         QVERIFY(popover.minimumHeight() >= 220);
+        QVERIFY(popover.maximumWidth() <= 920);
+        QVERIFY(popover.maximumHeight() <= 740);
+
+        popover.exibirTraducao("Test", "Teste", "IA", QPoint(300, 300));
+        const QRect initialGeom = popover.geometry();
+
+        // Simula arrasto na borda esquerda tentando expandir exageradamente (-2000px)
+        QMouseEvent pressLeft(QEvent::MouseButtonPress, QPoint(2, initialGeom.height() / 2),
+                              popover.mapToGlobal(QPoint(2, initialGeom.height() / 2)),
+                              Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&popover, &pressLeft);
+
+        QMouseEvent moveLeft(QEvent::MouseMove, QPoint(-2000, initialGeom.height() / 2),
+                             popover.mapToGlobal(QPoint(2, initialGeom.height() / 2)) - QPoint(2000, 0),
+                             Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(&popover, &moveLeft);
+
+        QMouseEvent releaseLeft(QEvent::MouseButtonRelease, QPoint(2, initialGeom.height() / 2),
+                                popover.mapToGlobal(QPoint(2, initialGeom.height() / 2)),
+                                Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(&popover, &releaseLeft);
+
+        // Garante que a largura respeitou o limite máximo e não expandiu infinitamente
+        QVERIFY(popover.width() <= popover.maximumWidth());
+        QVERIFY(popover.width() >= popover.minimumWidth());
     }
 
     void testTraducaoEditavelERetraducao() {
@@ -51,30 +76,21 @@ private slots:
         QCOMPARE(spyRetraducao.takeFirst().at(0).toString(), QString("Advanced circuit design"));
     }
 
-    void testCapturarImagensModos() {
-        QFile qssFile(":/themes/dark.qss");
-        QString qss;
-        if (qssFile.open(QIODevice::ReadOnly)) {
-            qss = QString::fromUtf8(qssFile.readAll());
-            qssFile.close();
-        }
-
+    void testMarkdownELatexNoChatEPararAudio() {
         QuickLookupPopover popover;
-        if (!qss.isEmpty()) popover.setStyleSheet(qss);
-        popover.resize(480, 320);
+        popover.exibirAssistenteIA("Análise de malha", QString(), QPoint(200, 200));
+        popover.atualizarRespostaChat("A impedância equivalente é **Z_eq** com $\\Omega$ e $\\alpha$.", "Gemini");
 
-        // 1. Tradução
-        popover.exibirTraducao("Negative impedance converter using operational amplifier.",
-                               "Conversor de impedância negativa utilizando amplificador operacional.",
-                               "Gemini", QPoint(200, 200));
-        QTest::qWait(100);
-        popover.grab().save("/home/thnsm/.gemini/antigravity-ide/brain/652f3ada-fd30-406a-a8f3-a13a01182de0/popover_traducao_editavel.png");
+        auto *txtChat = popover.findChild<QTextBrowser*>("txtPopoverChat");
+        QVERIFY(txtChat != nullptr);
+        const QString plain = txtChat->toPlainText();
+        QVERIFY(plain.contains("Ω"));
+        QVERIFY(plain.contains("α"));
 
-        // 2. Tutor
+        QSignalSpy spyParar(&popover, &QuickLookupPopover::pararAudioClicado);
         popover.exibirTutor("Feedback topology in multi-stage amplifiers.", QPoint(200, 200));
         popover.atualizarResultadoTutor(88, "Excelente pronúncia das consoantes plosivas.", "Feedback topology in multi-stage amplifiers.", {});
-        QTest::qWait(100);
-        popover.grab().save("/home/thnsm/.gemini/antigravity-ide/brain/652f3ada-fd30-406a-a8f3-a13a01182de0/popover_tutor_voz.png");
+        QCOMPARE(spyParar.count(), 0);
     }
 };
 

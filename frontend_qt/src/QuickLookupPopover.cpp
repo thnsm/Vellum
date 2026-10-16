@@ -1,4 +1,5 @@
 #include "QuickLookupPopover.h"
+#include "AiAssistantWidget.h"
 #include <QScreen>
 #include <QGuiApplication>
 #include <QMouseEvent>
@@ -8,12 +9,13 @@
 #include <QPixmap>
 
 QuickLookupPopover::QuickLookupPopover(QWidget *parent)
-    : QWidget(parent, Qt::Tool | Qt::FramelessWindowHint)
+    : QWidget(parent, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint)
 {
     setObjectName("quickLookupPopover");
     setAttribute(Qt::WA_ShowWithoutActivating, false);
     setMouseTracking(true);
     setMinimumSize(380, 260);
+    setMaximumSize(920, 740);
     resize(460, 320);
 
     setupUi();
@@ -107,12 +109,18 @@ void QuickLookupPopover::setupUi()
     m_btnTradOuvir->setObjectName("btnPopoverOuvir");
     m_btnTradOuvir->setCursor(Qt::PointingHandCursor);
 
+    m_btnTradParar = new QPushButton("Parar", m_pagTraducao);
+    m_btnTradParar->setObjectName("btnPopoverAcao");
+    m_btnTradParar->setToolTip("Interromper reprodução de áudio");
+    m_btnTradParar->setCursor(Qt::PointingHandCursor);
+
     m_btnTradCopiar = new QPushButton("Copiar Tradução", m_pagTraducao);
     m_btnTradCopiar->setObjectName("btnPopoverAcao");
     m_btnTradCopiar->setCursor(Qt::PointingHandCursor);
 
     tradActions->addWidget(m_btnTradAtualizar);
     tradActions->addWidget(m_btnTradOuvir);
+    tradActions->addWidget(m_btnTradParar);
     tradActions->addWidget(m_btnTradCopiar);
     tradActions->addStretch();
     tradLayout->addLayout(tradActions);
@@ -161,11 +169,17 @@ void QuickLookupPopover::setupUi()
     m_btnTutorOuvir->setObjectName("btnPopoverOuvir");
     m_btnTutorOuvir->setCursor(Qt::PointingHandCursor);
 
+    m_btnTutorParar = new QPushButton("Parar", m_pagTutor);
+    m_btnTutorParar->setObjectName("btnPopoverAcao");
+    m_btnTutorParar->setToolTip("Interromper reprodução de áudio");
+    m_btnTutorParar->setCursor(Qt::PointingHandCursor);
+
     m_btnTutorGravar = new QPushButton("Gravar Minha Voz", m_pagTutor);
     m_btnTutorGravar->setObjectName("btnPopoverGravar");
     m_btnTutorGravar->setCursor(Qt::PointingHandCursor);
 
     tutorBtns->addWidget(m_btnTutorOuvir);
+    tutorBtns->addWidget(m_btnTutorParar);
     tutorBtns->addWidget(m_btnTutorGravar);
     tutorBtns->addStretch();
     tutorLayout->addLayout(tutorBtns);
@@ -270,11 +284,12 @@ void QuickLookupPopover::setupUi()
     bottomLayout->setContentsMargins(0, 0, 0, 0);
     bottomLayout->addStretch();
 
-    auto *sizeGrip = new QSizeGrip(this);
-    sizeGrip->setObjectName("popoverSizeGrip");
-    sizeGrip->setFixedSize(16, 16);
-    sizeGrip->setCursor(Qt::SizeFDiagCursor);
-    bottomLayout->addWidget(sizeGrip);
+    m_sizeGrip = new QSizeGrip(this);
+    m_sizeGrip->setObjectName("popoverSizeGrip");
+    m_sizeGrip->setFixedSize(16, 16);
+    m_sizeGrip->setCursor(Qt::SizeFDiagCursor);
+    m_sizeGrip->installEventFilter(this);
+    bottomLayout->addWidget(m_sizeGrip);
     rootLayout->addLayout(bottomLayout);
 
     // ── Conexões de Eventos ───────────────────────────────────────────────
@@ -282,11 +297,10 @@ void QuickLookupPopover::setupUi()
 
     connect(m_btnHeaderExpandir, &QPushButton::clicked, this, [this]() {
         hide();
-        const int idx = static_cast<int>(m_modoAtual);
         if (m_modoAtual == Modo::Traducao) {
             emit expandirNoPainelClicado(0, m_txtTradOriginal->toPlainText(), m_textoTradPt);
         } else if (m_modoAtual == Modo::Tutor) {
-            emit expandirNoPainelClicado(1, m_lblTutorTexto->text(), QString());
+            emit expandirNoPainelClicado(1, m_textoTutorEsperado, QString());
         } else if (m_modoAtual == Modo::AssistenteIA) {
             emit expandirNoPainelClicado(2, m_inputChatPergunta->text(), m_chatImagemB64);
         } else {
@@ -298,6 +312,7 @@ void QuickLookupPopover::setupUi()
     connect(m_btnTradOuvir, &QPushButton::clicked, this, [this]() {
         emit ouvirPronunciaClicada(m_txtTradOriginal->toPlainText().trimmed());
     });
+    connect(m_btnTradParar, &QPushButton::clicked, this, &QuickLookupPopover::pararAudioClicado);
     connect(m_btnTradCopiar, &QPushButton::clicked, this, [this]() {
         const QString pt = m_txtTradTraduzido->toPlainText().trimmed();
         if (!pt.isEmpty()) {
@@ -307,10 +322,11 @@ void QuickLookupPopover::setupUi()
 
     // Tutor
     connect(m_btnTutorOuvir, &QPushButton::clicked, this, [this]() {
-        emit ouvirPronunciaClicada(m_lblTutorTexto->text());
+        emit ouvirPronunciaClicada(m_textoTutorEsperado);
     });
+    connect(m_btnTutorParar, &QPushButton::clicked, this, &QuickLookupPopover::pararAudioClicado);
     connect(m_btnTutorGravar, &QPushButton::clicked, this, [this]() {
-        emit gravarVozTutorClicada(m_lblTutorTexto->text());
+        emit gravarVozTutorClicada(m_textoTutorEsperado);
     });
 
     // Chat
@@ -365,25 +381,93 @@ void QuickLookupPopover::setModo(Modo modo)
     }
 }
 
+QRect QuickLookupPopover::obterGeometriaTelaUtil() const
+{
+    QScreen *scr = screen();
+    if (!scr && parentWidget()) {
+        scr = parentWidget()->screen();
+    }
+    if (!scr) {
+        scr = QGuiApplication::screenAt(geometry().center());
+    }
+    if (!scr) {
+        scr = QGuiApplication::primaryScreen();
+    }
+    if (!scr) {
+        return QRect(0, 0, 1920, 1080);
+    }
+    if (parentWidget() && parentWidget()->isFullScreen()) {
+        return scr->geometry();
+    }
+    return scr->availableGeometry();
+}
+
+void QuickLookupPopover::aplicarGeometriaSegura(QRect novaGeom)
+{
+    const QRect tela = obterGeometriaTelaUtil();
+    const int maxW = qBound(minimumWidth(), qMin(maximumWidth(), tela.width() - 24), 1200);
+    const int maxH = qBound(minimumHeight(), qMin(maximumHeight(), tela.height() - 24), 900);
+
+    const int w = qBound(minimumWidth(), novaGeom.width(), maxW);
+    const int h = qBound(minimumHeight(), novaGeom.height(), maxH);
+
+    int x = novaGeom.x();
+    int y = novaGeom.y();
+
+    // Mantém sempre dentro dos limites visíveis da tela (especialmente em tela cheia)
+    if (x + w > tela.right() - 8) {
+        x = tela.right() - w - 8;
+    }
+    if (x < tela.left() + 8) {
+        x = tela.left() + 8;
+    }
+    if (y + h > tela.bottom() - 8) {
+        y = tela.bottom() - h - 8;
+    }
+    if (y < tela.top() + 8) {
+        y = tela.top() + 8;
+    }
+
+    setGeometry(x, y, w, h);
+}
+
 void QuickLookupPopover::posicionarNaTela(const QPoint &posGlobal)
 {
-    QScreen *screen = QGuiApplication::screenAt(posGlobal);
-    QRect screenGeom = screen ? screen->availableGeometry() : QRect(0, 0, 1920, 1080);
+    QScreen *scr = QGuiApplication::screenAt(posGlobal);
+    if (!scr && parentWidget()) scr = parentWidget()->screen();
+    if (!scr) scr = QGuiApplication::primaryScreen();
+
+    const QRect screenGeom = scr
+        ? ((parentWidget() && parentWidget()->isFullScreen()) ? scr->geometry() : scr->availableGeometry())
+        : QRect(0, 0, 1920, 1080);
+
+    // Garante tamanho dentro dos limites ao abrir
+    const int maxW = qBound(minimumWidth(), qMin(maximumWidth(), screenGeom.width() - 24), 1200);
+    const int maxH = qBound(minimumHeight(), qMin(maximumHeight(), screenGeom.height() - 24), 900);
+    const int w = qBound(minimumWidth(), width(), maxW);
+    const int h = qBound(minimumHeight(), height(), maxH);
 
     int posX = posGlobal.x();
     int posY = posGlobal.y() + 15;
 
-    if (posX + width() > screenGeom.right() - 10) {
-        posX = screenGeom.right() - width() - 10;
+    if (posX + w > screenGeom.right() - 10) {
+        posX = screenGeom.right() - w - 10;
     }
-    if (posY + height() > screenGeom.bottom() - 10) {
-        posY = posGlobal.y() - height() - 15;
+    if (posY + h > screenGeom.bottom() - 10) {
+        posY = posGlobal.y() - h - 15;
     }
     if (posX < screenGeom.left() + 10) {
         posX = screenGeom.left() + 10;
     }
+    if (posY < screenGeom.top() + 10) {
+        posY = screenGeom.top() + 10;
+    }
 
-    move(posX, posY);
+    m_dragging = false;
+    m_resizing = false;
+    m_bordaAtiva = BordaRedimensionamento::Nenhuma;
+
+    setGeometry(posX, posY, w, h);
     show();
     raise();
     activateWindow();
@@ -419,7 +503,9 @@ void QuickLookupPopover::atualizarResultadoTraducao(const QString &traducaoPt, c
 void QuickLookupPopover::exibirTutor(const QString &textoEsperado, const QPoint &posGlobal)
 {
     setModo(Modo::Tutor);
-    m_lblTutorTexto->setText(textoEsperado);
+    m_textoTutorEsperado = textoEsperado;
+    m_lblTutorTexto->setTextFormat(Qt::RichText);
+    m_lblTutorTexto->setText(textoEsperado.toHtmlEscaped());
     m_barTutorAcuracia->setValue(0);
     m_lblTutorNota->setText("--%");
     m_lblTutorFeedback->setText("Clique em 'Gravar Minha Voz' para pronunciar o texto em voz alta.");
@@ -467,12 +553,16 @@ void QuickLookupPopover::exibirAnotacoes(const QString &textoInicial, const QPoi
     posicionarNaTela(posGlobal);
 }
 
-void QuickLookupPopover::atualizarResultadoTutor(int nota, const QString &feedback, const QString &textoFalado, const QStringList &ausentes)
+void QuickLookupPopover::atualizarResultadoTutor(int nota, const QString &feedback, const QString &textoFalado, const QStringList &ausentes, const QString &htmlDestacado)
 {
     Q_UNUSED(textoFalado);
     Q_UNUSED(ausentes);
     m_barTutorAcuracia->setValue(nota);
     m_lblTutorNota->setText(QString("%1%").arg(nota));
+
+    if (!htmlDestacado.isEmpty()) {
+        m_lblTutorTexto->setText(htmlDestacado);
+    }
 
     const QString color = (nota >= 80) ? "#10b981" : (nota >= 60) ? "#f59e0b" : "#ef4444";
     m_lblTutorFeedback->setText(QString("<span style='color: %1; font-weight: 600;'>Nota %2%</span>: %3").arg(color).arg(nota).arg(feedback.toHtmlEscaped()));
@@ -483,7 +573,8 @@ void QuickLookupPopover::atualizarResultadoTutor(int nota, const QString &feedba
 void QuickLookupPopover::atualizarRespostaChat(const QString &resposta, const QString &modelo)
 {
     m_lblHeaderBadge->setText(modelo.isEmpty() ? "IA" : modelo);
-    m_txtChatHistorico->append("<div style='margin: 4px 0;'><b style='color: #388bfd;'>Assistente:</b> " + resposta.toHtmlEscaped() + "</div>");
+    const QString htmlFormatado = AiAssistantWidget::renderizarMarkdownELatex(resposta);
+    m_txtChatHistorico->append("<div style='margin: 6px 0;'><b style='color: #388bfd;'>Assistente:</b><br>" + htmlFormatado + "</div>");
     m_btnChatEnviar->setEnabled(true);
 }
 
@@ -543,24 +634,95 @@ void QuickLookupPopover::atualizarCursorBorda(BordaRedimensionamento borda)
     }
 }
 
-// ── Filtro de Eventos para Arrastar pelo Cabeçalho ────────────────────────────
+// ── Filtro de Eventos para Arrastar pelo Cabeçalho e Alça de Redimensionamento ──
 bool QuickLookupPopover::eventFilter(QObject *watched, QEvent *event)
 {
-    if (watched == m_headerBar || watched == m_lblHeaderTitulo || watched == m_lblHeaderBadge) {
+    // Intercepta o QSizeGrip para usar nosso redimensionamento seguro (com limites máximos)
+    // em vez do comportamento nativo do QSizeGrip que pode redimensionar a MainWindow pai!
+    if (watched == m_sizeGrip) {
         switch (event->type()) {
         case QEvent::MouseButtonPress: {
             auto *me = static_cast<QMouseEvent*>(event);
             if (me->button() == Qt::LeftButton) {
-                m_dragging = true;
-                m_dragPos = me->globalPosition().toPoint() - frameGeometry().topLeft();
+                m_resizing = true;
+                m_dragging = false;
+                m_bordaAtiva = BordaRedimensionamento::BaseDireita;
+                m_resizeStartGeom = geometry();
+                m_resizeStartPos = me->globalPosition().toPoint();
                 return true;
             }
             break;
         }
         case QEvent::MouseMove: {
             auto *me = static_cast<QMouseEvent*>(event);
+            if (m_resizing && (me->buttons() & Qt::LeftButton)) {
+                const QPoint delta = me->globalPosition().toPoint() - m_resizeStartPos;
+                QRect newGeom = m_resizeStartGeom;
+                newGeom.setWidth(m_resizeStartGeom.width() + delta.x());
+                newGeom.setHeight(m_resizeStartGeom.height() + delta.y());
+                aplicarGeometriaSegura(newGeom);
+                return true;
+            }
+            break;
+        }
+        case QEvent::MouseButtonRelease: {
+            auto *me = static_cast<QMouseEvent*>(event);
+            if (me->button() == Qt::LeftButton) {
+                m_resizing = false;
+                m_bordaAtiva = BordaRedimensionamento::Nenhuma;
+                return true;
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    }
+
+    if (watched == m_headerBar || watched == m_lblHeaderTitulo || watched == m_lblHeaderBadge) {
+        switch (event->type()) {
+        case QEvent::MouseButtonPress: {
+            auto *me = static_cast<QMouseEvent*>(event);
+            if (me->button() == Qt::LeftButton) {
+                // Se clicou nos primeiros pixels do topo do cabeçalho, prioriza redimensionamento superior
+                const QPoint posNoPopover = mapFromGlobal(me->globalPosition().toPoint());
+                const BordaRedimensionamento borda = detectarBorda(posNoPopover);
+                if (borda != BordaRedimensionamento::Nenhuma) {
+                    m_resizing = true;
+                    m_dragging = false;
+                    m_bordaAtiva = borda;
+                    m_resizeStartGeom = geometry();
+                    m_resizeStartPos = me->globalPosition().toPoint();
+                    return true;
+                }
+                m_dragging = true;
+                m_resizing = false;
+                m_dragStartGlobalPos = me->globalPosition().toPoint();
+                m_dragStartWidgetPos = pos();
+                raise();
+                return true;
+            }
+            break;
+        }
+        case QEvent::MouseMove: {
+            auto *me = static_cast<QMouseEvent*>(event);
+            if (m_resizing && (me->buttons() & Qt::LeftButton)) {
+                QMouseEvent mappedEvent(
+                    QEvent::MouseMove,
+                    mapFromGlobal(me->globalPosition().toPoint()),
+                    me->globalPosition(),
+                    me->button(),
+                    me->buttons(),
+                    me->modifiers()
+                );
+                mouseMoveEvent(&mappedEvent);
+                return true;
+            }
             if (m_dragging && (me->buttons() & Qt::LeftButton)) {
-                move(me->globalPosition().toPoint() - m_dragPos);
+                const QPoint delta = me->globalPosition().toPoint() - m_dragStartGlobalPos;
+                QRect novaGeom = geometry();
+                novaGeom.moveTopLeft(m_dragStartWidgetPos + delta);
+                aplicarGeometriaSegura(novaGeom);
                 return true;
             }
             break;
@@ -569,6 +731,8 @@ bool QuickLookupPopover::eventFilter(QObject *watched, QEvent *event)
             auto *me = static_cast<QMouseEvent*>(event);
             if (me->button() == Qt::LeftButton) {
                 m_dragging = false;
+                m_resizing = false;
+                m_bordaAtiva = BordaRedimensionamento::Nenhuma;
                 return true;
             }
             break;
@@ -587,13 +751,17 @@ void QuickLookupPopover::mousePressEvent(QMouseEvent *event)
         m_bordaAtiva = detectarBorda(event->pos());
         if (m_bordaAtiva != BordaRedimensionamento::Nenhuma) {
             m_resizing = true;
+            m_dragging = false;
             m_resizeStartGeom = geometry();
             m_resizeStartPos = event->globalPosition().toPoint();
             event->accept();
             return;
         } else {
             m_dragging = true;
-            m_dragPos = event->globalPosition().toPoint() - frameGeometry().topLeft();
+            m_resizing = false;
+            m_dragStartGlobalPos = event->globalPosition().toPoint();
+            m_dragStartWidgetPos = pos();
+            raise();
             event->accept();
             return;
         }
@@ -605,57 +773,66 @@ void QuickLookupPopover::mouseMoveEvent(QMouseEvent *event)
 {
     if (m_resizing && (event->buttons() & Qt::LeftButton)) {
         const QPoint delta = event->globalPosition().toPoint() - m_resizeStartPos;
-        QRect newGeom = m_resizeStartGeom;
+        const QRect tela = obterGeometriaTelaUtil();
+        const int minW = minimumWidth();
+        const int minH = minimumHeight();
+        const int maxW = qBound(minW, qMin(maximumWidth(), tela.width() - 24), 1200);
+        const int maxH = qBound(minH, qMin(maximumHeight(), tela.height() - 24), 900);
+
+        int left = m_resizeStartGeom.left();
+        int top  = m_resizeStartGeom.top();
+        int w    = m_resizeStartGeom.width();
+        int h    = m_resizeStartGeom.height();
+        const int anchorRight  = m_resizeStartGeom.left() + m_resizeStartGeom.width();
+        const int anchorBottom = m_resizeStartGeom.top() + m_resizeStartGeom.height();
 
         switch (m_bordaAtiva) {
         case BordaRedimensionamento::Direita:
-            newGeom.setWidth(qMax(minimumWidth(), m_resizeStartGeom.width() + delta.x()));
+            w = qBound(minW, m_resizeStartGeom.width() + delta.x(), maxW);
             break;
         case BordaRedimensionamento::Base:
-            newGeom.setHeight(qMax(minimumHeight(), m_resizeStartGeom.height() + delta.y()));
+            h = qBound(minH, m_resizeStartGeom.height() + delta.y(), maxH);
             break;
         case BordaRedimensionamento::BaseDireita:
-            newGeom.setWidth(qMax(minimumWidth(), m_resizeStartGeom.width() + delta.x()));
-            newGeom.setHeight(qMax(minimumHeight(), m_resizeStartGeom.height() + delta.y()));
+            w = qBound(minW, m_resizeStartGeom.width() + delta.x(), maxW);
+            h = qBound(minH, m_resizeStartGeom.height() + delta.y(), maxH);
             break;
-        case BordaRedimensionamento::Esquerda: {
-            const int novoW = qMax(minimumWidth(), m_resizeStartGeom.width() - delta.x());
-            newGeom.setLeft(m_resizeStartGeom.right() - novoW);
+        case BordaRedimensionamento::Esquerda:
+            w = qBound(minW, m_resizeStartGeom.width() - delta.x(), maxW);
+            left = anchorRight - w;
             break;
-        }
-        case BordaRedimensionamento::BaseEsquerda: {
-            const int novoW = qMax(minimumWidth(), m_resizeStartGeom.width() - delta.x());
-            newGeom.setLeft(m_resizeStartGeom.right() - novoW);
-            newGeom.setHeight(qMax(minimumHeight(), m_resizeStartGeom.height() + delta.y()));
+        case BordaRedimensionamento::BaseEsquerda:
+            w = qBound(minW, m_resizeStartGeom.width() - delta.x(), maxW);
+            left = anchorRight - w;
+            h = qBound(minH, m_resizeStartGeom.height() + delta.y(), maxH);
             break;
-        }
-        case BordaRedimensionamento::Topo: {
-            const int novoH = qMax(minimumHeight(), m_resizeStartGeom.height() - delta.y());
-            newGeom.setTop(m_resizeStartGeom.bottom() - novoH);
+        case BordaRedimensionamento::Topo:
+            h = qBound(minH, m_resizeStartGeom.height() - delta.y(), maxH);
+            top = anchorBottom - h;
             break;
-        }
-        case BordaRedimensionamento::TopoDireita: {
-            const int novoH = qMax(minimumHeight(), m_resizeStartGeom.height() - delta.y());
-            newGeom.setTop(m_resizeStartGeom.bottom() - novoH);
-            newGeom.setWidth(qMax(minimumWidth(), m_resizeStartGeom.width() + delta.x()));
+        case BordaRedimensionamento::TopoDireita:
+            h = qBound(minH, m_resizeStartGeom.height() - delta.y(), maxH);
+            top = anchorBottom - h;
+            w = qBound(minW, m_resizeStartGeom.width() + delta.x(), maxW);
             break;
-        }
-        case BordaRedimensionamento::TopoEsquerda: {
-            const int novoW = qMax(minimumWidth(), m_resizeStartGeom.width() - delta.x());
-            const int novoH = qMax(minimumHeight(), m_resizeStartGeom.height() - delta.y());
-            newGeom.setLeft(m_resizeStartGeom.right() - novoW);
-            newGeom.setTop(m_resizeStartGeom.bottom() - novoH);
+        case BordaRedimensionamento::TopoEsquerda:
+            w = qBound(minW, m_resizeStartGeom.width() - delta.x(), maxW);
+            h = qBound(minH, m_resizeStartGeom.height() - delta.y(), maxH);
+            left = anchorRight - w;
+            top  = anchorBottom - h;
             break;
-        }
         default:
             break;
         }
 
-        setGeometry(newGeom);
+        aplicarGeometriaSegura(QRect(left, top, w, h));
         event->accept();
         return;
     } else if (m_dragging && (event->buttons() & Qt::LeftButton)) {
-        move(event->globalPosition().toPoint() - m_dragPos);
+        const QPoint delta = event->globalPosition().toPoint() - m_dragStartGlobalPos;
+        QRect novaGeom = geometry();
+        novaGeom.moveTopLeft(m_dragStartWidgetPos + delta);
+        aplicarGeometriaSegura(novaGeom);
         event->accept();
         return;
     } else {

@@ -159,13 +159,6 @@ def _resolver_modelo_ollama(preferido: Optional[str] = None) -> str:
         log.info(f"[Ollama] Usando primeiro modelo disponível: '{fallback}'.")
     return fallback
 
-# Cache LRU para traducoes identicas (evita reprocessar o mesmo trecho)
-# Limitado a 128 entradas — custo de memoria minimo (~512 KB)
-@functools.lru_cache(maxsize=128)
-def _traducao_cacheada(texto_hash: str, modelo: str) -> tuple:
-    """Wrapper de cache: chave = hash SHA1 do texto + modelo."""
-    return ()  # placeholder — a logica real esta em _traduzir_sync_interno
-
 _cache_traducao: dict = {}  # hash -> (en_corrigido, pt)
 _MAX_CACHE = 128
 
@@ -191,13 +184,20 @@ def _liberar_memoria_whisper():
             log.info("[Memória] Whisper descarregado com sucesso.")
 
 def _obter_modelo_whisper(nome_modelo: Optional[str] = None):
-    """Carrega o modelo Whisper apenas quando for solicitado pelo Tutor de pronúncia."""
+    """Carrega o modelo Whisper sob demanda e permite troca dinâmica (hot-swap) entre tiny.en e base.en."""
     global _modelo_whisper, _whisper_carregado_nome, _whisper_ultima_atividade
-    nome_alvo = nome_modelo or os.getenv("WHISPER_MODEL", WHISPER_MODEL_NAME)
+    nome_alvo = (nome_modelo or os.getenv("WHISPER_MODEL", WHISPER_MODEL_NAME)).strip()
     with _whisper_lock:
         _whisper_ultima_atividade = time.time()
         if _modelo_whisper is not None and _whisper_carregado_nome == nome_alvo:
             return _modelo_whisper
+
+        if _modelo_whisper is not None and _whisper_carregado_nome != nome_alvo:
+            log.info(f"[Whisper] Alternando modelo de '{_whisper_carregado_nome}' para '{nome_alvo}'...")
+            _modelo_whisper = None
+            _whisper_carregado_nome = None
+            import gc
+            gc.collect()
 
         log.info(f"[Whisper] Carregando modelo '{nome_alvo}' sob demanda...")
         download_root = None
@@ -682,23 +682,16 @@ def _traduzir_via_ollama_local(texto_ingles: str, modelo_ollama: str) -> tuple:
         return (texto_ingles, pt_limpo, f"{modelo_ollama} (Local)")
 
 
-def _traduzir_sync(texto_ingles: Optional[str] = None, imagem_base64: Optional[str] = None,
-                  gemini_api_key: Optional[str] = None, modelo_especifico: Optional[str] = None) -> tuple:
-    """Traducao tecnica EN→PT com correcao de OCR embutida.
-
-    Fluxo:
-      1. OCR (Tesseract) se vier imagem com pre-processamento otimizado
-      2. Pre-processador de regras instantaneo (de-hifenizacao e siglas de eng. eletrica)
-      3. Cache LRU: se o mesmo texto ja foi traduzido, retorna instantaneamente
-      4. Roteamento transparente:
-         - Se gemini_api_key presente → API Gemini na nuvem
-         - Senao → Ollama local com o modelo EXATO solicitado (phi3:mini, llama3.2:3b, llama3)
-    Retorna: (texto_en_corrigido, texto_pt, modelo_usado)
+async def _traduzir_async(texto_ingles: Optional[str] = None, imagem_base64: Optional[str] = None,
+                          gemini_api_key: Optional[str] = None, modelo_especifico: Optional[str] = None) -> tuple:
+    """Tradução técnica EN→PT assíncrona nativa com correção de OCR embutida.
+    Não cria event loops secundários — reutiliza o _http_async_client diretamente no loop do FastAPI
+    e delega tarefas bloqueantes de CPU/disco (Tesseract / Ollama) via asyncio.to_thread.
     """
     if imagem_base64:
         log.info("[Traducao] Extraindo texto da imagem via Tesseract otimizado...")
         try:
-            texto_ingles = _extrair_texto_imagem(imagem_base64)
+            texto_ingles = await asyncio.to_thread(_extrair_texto_imagem, imagem_base64)
             log.info(f"[Traducao] OCR extraiu {len(texto_ingles)} caracteres.")
             if not texto_ingles:
                 return ("", "(Nenhum texto detectado nesta area da pagina)", "Tesseract OCR")
@@ -713,7 +706,7 @@ def _traduzir_sync(texto_ingles: Optional[str] = None, imagem_base64: Optional[s
     texto_ingles = _pre_processar_ocr_engenharia(texto_ingles)
 
     # Identifica o modelo exato que executara (com fallback inteligente se nao estiver baixado)
-    modelo_ollama = _resolver_modelo_ollama(modelo_especifico)
+    modelo_ollama = await asyncio.to_thread(_resolver_modelo_ollama, modelo_especifico)
     motor_id = "gemini" if gemini_api_key else modelo_ollama
 
     # Cache LRU: evita rechamar Ollama/Gemini para o mesmo texto
@@ -722,14 +715,10 @@ def _traduzir_sync(texto_ingles: Optional[str] = None, imagem_base64: Optional[s
         log.info(f"[Traducao] Cache hit ({motor_id}) — retornando resultado anterior.")
         return _cache_traducao[cache_key]
 
-    # Gemini disponivel → nuvem, zero CPU/GPU local
+    # Gemini disponivel → nuvem na mesma event loop do FastAPI (connection pooling seguro)
     if gemini_api_key:
         try:
-            loop = asyncio.new_event_loop()
-            en_corrigido, pt = loop.run_until_complete(
-                _traduzir_via_gemini_async(texto_ingles, gemini_api_key, modelo_especifico)
-            )
-            loop.close()
+            en_corrigido, pt = await _traduzir_via_gemini_async(texto_ingles, gemini_api_key, modelo_especifico)
             log.info("[Traducao] Concluida via Gemini (nuvem).")
             resultado = (en_corrigido, pt, "Gemini (Nuvem)")
             _guardar_cache(cache_key, resultado)
@@ -737,8 +726,8 @@ def _traduzir_sync(texto_ingles: Optional[str] = None, imagem_base64: Optional[s
         except Exception:
             pass  # fallback para Ollama local abaixo
 
-    # Ollama local: processamento com modelo especificado
-    resultado = _traduzir_via_ollama_local(texto_ingles, modelo_ollama)
+    # Ollama local: processamento em thread separada para não bloquear o loop HTTP
+    resultado = await asyncio.to_thread(_traduzir_via_ollama_local, texto_ingles, modelo_ollama)
     _guardar_cache(cache_key, resultado)
     return resultado
 
@@ -750,104 +739,334 @@ def _guardar_cache(key: str, valor: tuple) -> None:
     _cache_traducao[key] = valor
 
 
-
-def _limpar_ocr_sync(texto_sujo: Optional[str] = None, imagem_base64: Optional[str] = None,
-                    gemini_api_key: Optional[str] = None, modelo_especifico: Optional[str] = None) -> str:
-    """Retorna ingles corrigido reutilizando o prompt duplo de _traduzir_sync.
-    Nao faz chamada extra ao Ollama — aproveita o en_corrigido do prompt de traducao.
-    """
+async def _limpar_ocr_async(texto_sujo: Optional[str] = None, imagem_base64: Optional[str] = None,
+                            gemini_api_key: Optional[str] = None, modelo_especifico: Optional[str] = None) -> str:
+    """Retorna inglês corrigido reutilizando o prompt duplo de _traduzir_async."""
     if imagem_base64:
-        texto_sujo = _extrair_texto_imagem(imagem_base64)
+        texto_sujo = await asyncio.to_thread(_extrair_texto_imagem, imagem_base64)
     if not texto_sujo:
         return ""
     texto_sujo = _pre_processar_ocr_engenharia(texto_sujo)
     try:
-        en_corrigido, _, _ = _traduzir_sync(texto_sujo, gemini_api_key=gemini_api_key, modelo_especifico=modelo_especifico)
+        en_corrigido, _, _ = await _traduzir_async(texto_sujo, gemini_api_key=gemini_api_key, modelo_especifico=modelo_especifico)
         return en_corrigido if en_corrigido else texto_sujo
     except Exception:
         return texto_sujo
 
 
+# ---------------------------------------------------------------------------
+# Avaliação Fonética Leve Palavra a Palavra + Suporte Multimodal de Áudio
+# ---------------------------------------------------------------------------
+_ultimo_audio_wav_b64: Optional[str] = None
 
-def _avaliar_pronuncia_sync(texto_esperado: str, texto_falado: str, nivel: str = "intermediario",
-                            modelo: Optional[str] = None, api_key: Optional[str] = None) -> dict:
-    """
-    Compara o texto esperado do documento com a transcrição do Whisper.
-    Calcula acurácia objetiva e gera feedback de pronúncia via LLM considerando o nível de exigência
-    e o modelo configurado no perfil ativo (Gemini na nuvem ou modelo local do Ollama).
-    """
-    palavras_esperadas = [w.lower().strip(".,!?;:\"'()[]") for w in texto_esperado.split() if w]
-    palavras_faladas   = [w.lower().strip(".,!?;:\"'()[]") for w in texto_falado.split() if w]
+def _audio_array_para_wav_base64(audio_array: np.ndarray, taxa_amostragem: int = 16000) -> str:
+    """Converte o array float32 gravado em um WAV PCM 16-bit compacto em memória (~30-80 KB)."""
+    import wave
+    pcm16 = np.clip(audio_array * 32767.0, -32768, 32767).astype(np.int16)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(taxa_amostragem)
+        wf.writeframes(pcm16.tobytes())
+    return base64.b64encode(buf.getvalue()).decode("ascii")
 
-    matcher = difflib.SequenceMatcher(None, palavras_esperadas, palavras_faladas)
-    ratio = matcher.ratio()
 
-    # Ajuste de rigor por nível
+_MAPA_SIMBOLOS_FALA = {
+    "kω": "kilohms",
+    "mω": "megohms",
+    "ω": "ohms",
+    "μa": "microamps",
+    "ua": "microamps",
+    "μf": "microfarads",
+    "uf": "microfarads",
+    "nf": "nanofarads",
+    "pf": "picofarads",
+    "=": "equals",
+}
+
+
+def _normalizar_token_pronuncia(token: str) -> str:
+    """Limpa pontuação periférica e normaliza unidades técnicas para comparação justa."""
+    limpo = token.lower().strip(".,!?;:\"'()[]{}<>—–-")
+    return _MAPA_SIMBOLOS_FALA.get(limpo, limpo)
+
+
+def _chave_fonetica_ingles(palavra: str) -> str:
+    """Gera esqueleto fonético leve para detectar palavras pronunciadas com sotaque brasileiro
+    (ex: 'three' vs 'tree'/'free', 'voltage' vs 'voltagi', 'emitter' vs 'emiter')."""
+    w = re.sub(r"[^a-z0-9]", "", palavra.lower())
+    if not w:
+        return ""
+    w = re.sub(r"ght", "t", w)
+    w = re.sub(r"gh", "", w)
+    w = re.sub(r"ph", "f", w)
+    w = re.sub(r"th", "t", w)
+    w = re.sub(r"sh", "x", w)
+    w = re.sub(r"ch", "x", w)
+    w = re.sub(r"tion$", "xan", w)
+    w = re.sub(r"sion$", "zan", w)
+    w = re.sub(r"ck", "k", w)
+    w = w.replace("c", "k").replace("q", "k").replace("w", "v").replace("y", "i").replace("z", "s")
+    # Remove consoantes duplicadas seguidas (ex: emitter -> emiter)
+    w = re.sub(r"(.)\1+", r"\1", w)
+    if len(w) > 3 and w.endswith("e"):
+        w = w[:-1]
+    return w
+
+
+def _similaridade_palavras_pronuncia(esp: str, fal: str) -> float:
+    """Retorna score [0.0, 1.0] combinando igualdade ortográfica e proximidade fonética.
+    Se a palavra transcrita for diferente da esperada mas foneticamente similar (ex: 'tree' vs 'three'),
+    limita a 0.82 para destacar em amarelo ('aproximado') nos níveis intermediário e avançado."""
+    if not esp or not fal:
+        return 0.0
+    if esp == fal:
+        return 1.0
+    sim_orto = difflib.SequenceMatcher(None, esp, fal).ratio()
+    fon_esp = _chave_fonetica_ingles(esp)
+    fon_fal = _chave_fonetica_ingles(fal)
+    if fon_esp and fon_esp == fon_fal:
+        return min(0.82, max(sim_orto, 0.80))
+    sim_fon = difflib.SequenceMatcher(None, fon_esp, fon_fal).ratio() if (fon_esp and fon_fal) else 0.0
+    return min(0.84, max(sim_orto, sim_fon * 0.90))
+
+
+def _alinhar_palavras_pronuncia(texto_esperado: str, texto_falado: str, nivel: str = "intermediario") -> dict:
+    """Alinha palavra por palavra o texto esperado com o que foi falado e gera HTML colorido."""
+    import html as _html
+
+    # Separa palavras compostas por hífen (ex: base-emitter -> base emitter) mantendo exibição original
+    tokens_exibicao = [t for t in re.split(r"(\s+|-)", texto_esperado.strip()) if t and not t.isspace() and t != "-"]
+    esperadas_norm = [_normalizar_token_pronuncia(t) for t in tokens_exibicao]
+    faladas_brutas = [t for t in re.split(r"[\s-]+", texto_falado.strip()) if t]
+    faladas_norm = [_normalizar_token_pronuncia(t) for t in faladas_brutas if _normalizar_token_pronuncia(t)]
+
+    # Limiares por nível
     if nivel == "iniciante":
-        # Tolerância generosa para iniciantes
-        similaridade = min(100, int(ratio * 125))
-        cobranca_prompt = "Nível do aluno: INICIANTE. Seja muito encorajador e acolhedor, parabenize os acertos e releve pequenos desvios de sotaque."
+        limiar_correto = 0.80
+        limiar_aprox = 0.48
+        peso_aprox = 0.80
     elif nivel == "avancado":
-        # Rigor alto: exige correspondência precisa
-        similaridade = int(ratio * 90)
-        cobranca_prompt = "Nível do aluno: AVANÇADO / EXIGENTE. Seja rigoroso, pontue com precisão trocas de fonemas, omissões de terminações verbais e ritmo."
+        limiar_correto = 0.94
+        limiar_aprox = 0.65
+        peso_aprox = 0.50
     else:
-        similaridade = int(ratio * 100)
-        cobranca_prompt = "Nível do aluno: INTERMEDIÁRIO. Seja equilibrado, aponte palavras com pronúncia truncada e elogie a fluidez."
+        limiar_correto = 0.86
+        limiar_aprox = 0.55
+        peso_aprox = 0.70
 
-    set_esperadas = set(palavras_esperadas)
-    set_faladas = set(palavras_faladas)
-    ausentes = list(set_esperadas - set_faladas)[:6]
+    matcher = difflib.SequenceMatcher(None, esperadas_norm, faladas_norm)
+    analise_palavras = []
+    ausentes_ou_tropecos = []
+    soma_pontos = 0.0
+    total_validas = 0
 
-    prompt = f"""Você é um tutor de pronúncia em inglês para estudantes universitários de Engenharia.
-{cobranca_prompt}
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for idx_e in range(i1, i2):
+                orig = tokens_exibicao[idx_e]
+                analise_palavras.append({
+                    "palavra": orig,
+                    "status": "correto",
+                    "falado_como": orig,
+                    "similaridade": 100,
+                })
+                soma_pontos += 1.0
+                total_validas += 1
+        elif tag == "replace":
+            bloco_esp = list(range(i1, i2))
+            bloco_fal = list(range(j1, j2))
+            usados_fal = set()
+            for idx_e in bloco_esp:
+                orig = tokens_exibicao[idx_e]
+                norm_e = esperadas_norm[idx_e]
+                if not norm_e:
+                    continue
+                total_validas += 1
+                melhor_sim = 0.0
+                melhor_j = None
+                for idx_f in bloco_fal:
+                    if idx_f in usados_fal:
+                        continue
+                    sim = _similaridade_palavras_pronuncia(norm_e, faladas_norm[idx_f])
+                    if sim > melhor_sim:
+                        melhor_sim = sim
+                        melhor_j = idx_f
 
-Texto original esperado do livro: "{texto_esperado}"
-O que o reconhecimento de voz captou da fala do aluno: "{texto_falado}"
+                if melhor_j is not None and melhor_sim >= limiar_correto:
+                    usados_fal.add(melhor_j)
+                    analise_palavras.append({
+                        "palavra": orig,
+                        "status": "correto",
+                        "falado_como": faladas_brutas[melhor_j],
+                        "similaridade": int(melhor_sim * 100),
+                    })
+                    soma_pontos += 1.0
+                elif melhor_j is not None and melhor_sim >= limiar_aprox:
+                    usados_fal.add(melhor_j)
+                    falou_str = faladas_brutas[melhor_j]
+                    analise_palavras.append({
+                        "palavra": orig,
+                        "status": "aproximado",
+                        "falado_como": falou_str,
+                        "similaridade": int(melhor_sim * 100),
+                    })
+                    soma_pontos += peso_aprox
+                    ausentes_ou_tropecos.append(f'{orig} (soou como "{falou_str}")')
+                else:
+                    falou_str = faladas_brutas[melhor_j] if (melhor_j is not None and melhor_sim >= 0.3) else ""
+                    if melhor_j is not None and melhor_sim >= 0.3:
+                        usados_fal.add(melhor_j)
+                    analise_palavras.append({
+                        "palavra": orig,
+                        "status": "erro",
+                        "falado_como": falou_str,
+                        "similaridade": int(melhor_sim * 100),
+                    })
+                    if falou_str:
+                        ausentes_ou_tropecos.append(f'{orig} (soou como "{falou_str}")')
+                    else:
+                        ausentes_ou_tropecos.append(orig)
+        elif tag == "delete":
+            for idx_e in range(i1, i2):
+                orig = tokens_exibicao[idx_e]
+                if not esperadas_norm[idx_e]:
+                    continue
+                total_validas += 1
+                analise_palavras.append({
+                    "palavra": orig,
+                    "status": "erro",
+                    "falado_como": "",
+                    "similaridade": 0,
+                })
+                ausentes_ou_tropecos.append(orig)
 
-Forneça um feedback curto (2 a 3 frases) em português:
-1. Diga claramente como foi a clareza geral e o que o aluno acertou.
-2. Dê uma dica fonética sobre as palavras mais difíceis ou que saíram distorcidas.
-Retorne APENAS o feedback, sem notas numéricas no texto.
-"""
+    nota = int(round((soma_pontos / max(1, total_validas)) * 100))
+    nota = max(0, min(100, nota))
+
+    # Monta HTML colorido palavra a palavra para visualização imediata na UI
+    partes_html = []
+    for item in analise_palavras:
+        pal_esc = _html.escape(item["palavra"])
+        st = item["status"]
+        if st == "correto":
+            partes_html.append(
+                f"<span style='color: #34d399; background-color: rgba(16, 185, 129, 0.14); "
+                f"padding: 2px 5px; border-radius: 4px; font-weight: 600;'>{pal_esc}</span>"
+            )
+        elif st == "aproximado":
+            fal_esc = _html.escape(item["falado_como"])
+            dica_hover = f' title="Ouviu: {fal_esc}"' if fal_esc else ""
+            partes_html.append(
+                f"<span{dica_hover} style='color: #fbbf24; background-color: rgba(245, 158, 11, 0.18); "
+                f"border-bottom: 2px dashed #f59e0b; padding: 2px 5px; border-radius: 4px; font-weight: 600;'>"
+                f"{pal_esc}</span>"
+            )
+        else:
+            partes_html.append(
+                f"<span style='color: #f87171; background-color: rgba(239, 68, 68, 0.18); "
+                f"text-decoration: underline; padding: 2px 5px; border-radius: 4px; font-weight: 700;'>"
+                f"{pal_esc}</span>"
+            )
+
+    html_destacado = " ".join(partes_html)
+
+    return {
+        "nota": nota,
+        "analise_palavras": analise_palavras,
+        "html_destacado": html_destacado,
+        "ausentes": ausentes_ou_tropecos[:6],
+        "palavras_faladas": faladas_norm,
+    }
+
+
+async def _avaliar_pronuncia_async(texto_esperado: str, texto_falado: str, nivel: str = "intermediario",
+                                   modelo: Optional[str] = None, api_key: Optional[str] = None) -> dict:
+    """
+    Avalia a pronúncia combinando:
+    1. Alinhamento fonético determinístico palavra a palavra (Verde / Amarelo / Vermelho).
+    2. Avaliação multimodal de áudio direto via Gemini (quando api_key está presente, a IA escuta o WAV real!)
+       ou feedback guiado via Ollama local no modo Offline.
+    """
+    alinhamento = _alinhar_palavras_pronuncia(texto_esperado, texto_falado, nivel)
+    similaridade = alinhamento["nota"]
+    ausentes = alinhamento["ausentes"]
+
+    if nivel == "iniciante":
+        cobranca_prompt = "Nível: INICIANTE. Seja acolhedor e encorajador, elogie o esforço e foque apenas nas 1 ou 2 palavras mais importantes."
+    elif nivel == "avancado":
+        cobranca_prompt = "Nível: AVANÇADO. Seja rigoroso com fonemas (como TH, R retroflexo, vogais curtas/longas), ligação entre palavras (linking) e entonação."
+    else:
+        cobranca_prompt = "Nível: INTERMEDIÁRIO. Equilibre elogios aos acertos com correção prática das palavras em amarelo/vermelho."
+
+    resumo_tropecos = ", ".join(ausentes) if ausentes else "Nenhuma palavra omitida; pronúncia muito próxima do esperado."
+
+    prompt = (
+        "Você é um professor brasileiro especialista em ensinar pronúncia de inglês técnico para estudantes de Engenharia.\n"
+        f"{cobranca_prompt}\n\n"
+        f'Frase original em inglês: "{texto_esperado}"\n'
+        f'Transcrição captada pelo Whisper: "{texto_falado}"\n'
+        f"Pontos de atenção detectados no alinhamento: {resumo_tropecos}\n\n"
+        "Escreva um feedback curto, direto e prático em português (máximo 3 frases):\n"
+        "1. Comente rapidamente o que ficou bom na leitura.\n"
+        "2. Para as palavras que saíram diferentes ou difíceis, ensine COMO FALAR usando pronúncia figurada para brasileiros "
+        '(exemplo: "circuit" -> fale "sâr-kit"; "through" -> fale "thrú" com a língua entre os dentes; "voltage" -> fale "vôul-tidj").\n'
+        "Retorne APENAS o texto do feedback, sem títulos e sem repetir a nota numérica."
+    )
+
     feedback = ""
-    # Se tiver chave do Gemini informada (perfil Nuvem)
     if api_key:
+        client = _obter_http_client()
         for mod in ["gemini-3.5-flash-lite", "gemini-3.5-flash"]:
             try:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{mod}:generateContent?key={api_key}"
+                parts_req = []
+                # Se temos o áudio real gravado em memória, envia para o Gemini ouvir de verdade o sotaque e fonemas!
+                if _ultimo_audio_wav_b64:
+                    parts_req.append({
+                        "inlineData": {
+                            "mimeType": "audio/wav",
+                            "data": _ultimo_audio_wav_b64
+                        }
+                    })
+                parts_req.append({"text": prompt})
                 payload = {
-                    "contents": [{"parts": [{"text": prompt}]}],
-                    "generationConfig": {"temperature": 0.2, "maxOutputTokens": 200}
+                    "contents": [{"parts": parts_req}],
+                    "generationConfig": {"temperature": 0.2, "maxOutputTokens": 240}
                 }
-                with httpx.Client(timeout=8.0) as client:
-                    resp = client.post(url, json=payload)
-                    if resp.status_code == 200:
-                        parts = resp.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                        feedback = "\n".join(p.get("text", "") for p in parts if "text" in p).strip()
-                        if feedback:
-                            log.info(f"[Tutor Pronúncia] Feedback gerado via Gemini ({mod}).")
-                            break
-                    elif resp.status_code in (503, 429):
-                        log.warning(f"[Tutor Pronúncia] {mod} com alta demanda ({resp.status_code}), tentando modelo reserva...")
-                        continue
+                resp = await client.post(url, json=payload, timeout=9.0)
+                if resp.status_code == 200:
+                    parts = resp.json().get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                    feedback = "\n".join(p.get("text", "") for p in parts if "text" in p).strip()
+                    if feedback:
+                        log.info(f"[Tutor Pronúncia] Feedback multimodal gerado via Gemini ({mod}).")
+                        break
+                elif resp.status_code in (503, 429):
+                    log.warning(f"[Tutor Pronúncia] {mod} com alta demanda ({resp.status_code}), tentando reserva...")
+                    continue
             except Exception as e:
                 log.warning(f"[Tutor Pronúncia] Falha no Gemini {mod} ({e}), tentando próximo...")
 
-    # Se não usou Gemini ou falhou, usa o modelo local do Ollama correspondente ao perfil
     if not feedback:
-        modelo_ollama = _resolver_modelo_ollama(modelo)
-        try:
+        def _gerar_ollama():
+            modelo_ollama = _resolver_modelo_ollama(modelo)
             resp = ollama.generate(
                 model=modelo_ollama,
                 prompt=prompt.strip(),
-                options={"temperature": 0.2, "num_predict": 180},
+                options={"temperature": 0.2, "num_predict": 200},
             )
-            feedback = resp["response"].strip()
-            log.info(f"[Tutor Pronúncia] Feedback gerado via Ollama ({modelo_ollama}).")
+            return resp["response"].strip(), modelo_ollama
+
+        try:
+            feedback, mod_usado = await asyncio.to_thread(_gerar_ollama)
+            log.info(f"[Tutor Pronúncia] Feedback gerado via Ollama ({mod_usado}).")
         except Exception as e:
-            log.error(f"[Tutor Pronúncia] Erro no Ollama ({modelo_ollama}): {e}")
-            feedback = f"Boa tentativa! Acurácia de correspondência de {similaridade}%."
+            log.error(f"[Tutor Pronúncia] Fallback estático ({e})")
+            if ausentes:
+                feedback = f"Boa leitura! Pratique repetir devagar os termos destacados em amarelo/vermelho: {', '.join(ausentes[:3])}."
+            else:
+                feedback = "Excelente leitura! Todas as palavras técnicas foram pronunciadas com ótima clareza."
 
     return {
         "nota": similaridade,
@@ -855,7 +1074,9 @@ Retorne APENAS o feedback, sem notas numéricas no texto.
         "texto_esperado": texto_esperado,
         "texto_falado": texto_falado,
         "palavras_ausentes": ausentes,
-        "palavras_faladas": palavras_faladas,
+        "palavras_faladas": alinhamento["palavras_faladas"],
+        "analise_palavras": alinhamento["analise_palavras"],
+        "html_destacado": alinhamento["html_destacado"],
     }
 
 
@@ -865,7 +1086,7 @@ Retorne APENAS o feedback, sem notas numéricas no texto.
 app = FastAPI(
     title="Motor de IA & Tutor de Inglês",
     description="Microserviço local para Tradução, OCR e Tutor de Pronúncia",
-    version="2.0.0",
+    version="2.1.0",
 )
 
 app.add_middleware(
@@ -937,6 +1158,12 @@ class AvaliarPronunciaRequest(BaseModel):
     modelo: Optional[str] = None
     api_key: Optional[str] = None
 
+class PalavraPronunciaStatus(BaseModel):
+    palavra: str
+    status: str  # "correto" | "aproximado" | "erro"
+    falado_como: str = ""
+    similaridade: int = 100
+
 class AvaliarPronunciaResponse(BaseModel):
     nota: int
     feedback: str
@@ -944,6 +1171,8 @@ class AvaliarPronunciaResponse(BaseModel):
     texto_falado: str
     palavras_ausentes: List[str]
     palavras_faladas: List[str]
+    analise_palavras: List[PalavraPronunciaStatus] = []
+    html_destacado: str = ""
 
 class ChatMensagem(BaseModel):
     role: str  # "user" ou "assistant"
@@ -986,11 +1215,11 @@ async def listar_vozes():
 @app.get("/modelos_status", tags=["Health"])
 async def modelos_status():
     """Retorna o status do Ollama local e disponibilidade dos modelos de cada tier."""
-    instalados = _obter_modelos_instalados()
+    instalados = await asyncio.to_thread(_obter_modelos_instalados)
     ollama_ok = len(instalados) > 0
     if not ollama_ok:
         try:
-            ollama.list()
+            await asyncio.to_thread(ollama.list)
             ollama_ok = True
         except Exception:
             ollama_ok = False
@@ -1040,8 +1269,8 @@ async def traduzir(body: TraduzirRequest):
 
     gemini_key = (body.api_key or os.environ.get("GEMINI_API_KEY", "")).strip() or None
     try:
-        texto_en, traducao_pt, modelo_usado = await asyncio.to_thread(
-            _traduzir_sync, body.texto_ingles, body.imagem_base64, gemini_key, body.modelo
+        texto_en, traducao_pt, modelo_usado = await _traduzir_async(
+            body.texto_ingles, body.imagem_base64, gemini_key, body.modelo
         )
     except Exception as exc:
         log.error(f"[/traduzir] Erro: {exc}")
@@ -1059,8 +1288,8 @@ async def limpar_ocr(body: TextoSujoRequest):
 
     gemini_key = (body.api_key or os.environ.get("GEMINI_API_KEY", "")).strip() or None
     try:
-        resultado = await asyncio.to_thread(
-            _limpar_ocr_sync, body.texto_sujo, body.imagem_base64, gemini_key, body.modelo
+        resultado = await _limpar_ocr_async(
+            body.texto_sujo, body.imagem_base64, gemini_key, body.modelo
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Erro no OCR/IA: {exc}")
@@ -1114,12 +1343,13 @@ async def iniciar_gravacao():
 
 
 @app.post("/parar_gravacao", response_model=TranscricaoResponse, tags=["Áudio"])
-async def parar_gravacao(idioma: str = "en"):
+async def parar_gravacao(idioma: str = "en", modelo_whisper: Optional[str] = None):
     """
-    Para a gravação e transcreve o áudio com o Whisper.
-    Padrão para treino de pronúncia: idioma='en'.
+    Para a gravação, guarda o WAV em memória para análise multimodal e transcreve com o Whisper
+    usando decodificação literal (temperature=0.0, condition_on_previous_text=False) para evitar
+    que o modelo mascara erros de pronúncia pelo contexto.
     """
-    global _gravacao_thread, _gravando
+    global _gravacao_thread, _gravando, _ultimo_audio_wav_b64
 
     if not _gravando:
         raise HTTPException(status_code=400, detail="Nenhuma gravação em andamento.")
@@ -1133,15 +1363,26 @@ async def parar_gravacao(idioma: str = "en"):
         raise HTTPException(status_code=422, detail="Nenhum áudio capturado.")
 
     audio_array = np.concatenate(_audio_buffer).flatten()
-    log.info(f"[Whisper] Transcrevendo {len(audio_array)/16000:.1f}s de áudio em inglês...")
+    try:
+        _ultimo_audio_wav_b64 = _audio_array_para_wav_base64(audio_array, 16000)
+    except Exception:
+        _ultimo_audio_wav_b64 = None
+
+    log.info(f"[Whisper] Transcrevendo {len(audio_array)/16000:.1f}s de áudio em inglês (modelo: {modelo_whisper or WHISPER_MODEL_NAME})...")
 
     def _transcrever():
         global _whisper_ultima_atividade
         _whisper_ultima_atividade = time.time()
-        mod = _obter_modelo_whisper()
+        mod = _obter_modelo_whisper(modelo_whisper)
         if mod is None:
             raise RuntimeError("Módulo de reconhecimento de voz (Whisper) indisponível.")
-        return mod.transcribe(audio_array, language=idioma)["text"].strip()
+        res = mod.transcribe(
+            audio_array,
+            language=idioma,
+            temperature=0.0,
+            condition_on_previous_text=False,
+        )
+        return res["text"].strip()
 
     try:
         texto = await asyncio.to_thread(_transcrever)
@@ -1160,19 +1401,19 @@ async def parar_gravacao(idioma: str = "en"):
 async def avaliar_pronuncia(body: AvaliarPronunciaRequest):
     """
     Avalia a pronúncia do aluno comparando o texto esperado com o falado.
-    Retorna pontuação de similaridade e feedback fonético construtivo do tutor.
+    Retorna pontuação de similaridade, destaque colorido palavra por palavra e feedback fonético construtivo.
     """
     if not body.texto_esperado.strip() or not body.texto_falado.strip():
         raise HTTPException(status_code=422, detail="Ambos os campos são obrigatórios.")
 
+    gemini_key = (body.api_key or os.environ.get("GEMINI_API_KEY", "")).strip() or None
     try:
-        resultado = await asyncio.to_thread(
-            _avaliar_pronuncia_sync, 
-            body.texto_esperado, 
-            body.texto_falado, 
+        resultado = await _avaliar_pronuncia_async(
+            body.texto_esperado,
+            body.texto_falado,
             body.nivel or "intermediario",
             body.modelo,
-            body.api_key
+            gemini_key
         )
     except Exception as exc:
         log.error(f"[/avaliar_pronuncia] Erro: {exc}")
@@ -1281,7 +1522,7 @@ async def _chamar_gemini_chat_async(mensagem: str, imagem_base64: Optional[str],
 
 async def _chamar_ollama_chat_async(mensagem: str, imagem_base64: Optional[str], historico: List[ChatMensagem], modelo: Optional[str]) -> str:
     modelo_preferido = modelo or ("llama3.2-vision" if imagem_base64 else None)
-    modelo_escolhido = _resolver_modelo_ollama(modelo_preferido)
+    modelo_escolhido = await asyncio.to_thread(_resolver_modelo_ollama, modelo_preferido)
     url = "http://localhost:11434/api/chat"
     
     system_instruction = (
@@ -1312,13 +1553,13 @@ async def _chamar_ollama_chat_async(mensagem: str, imagem_base64: Optional[str],
         "stream": False
     }
     
+    client = _obter_http_client()
     try:
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code != 200:
-                return f"⚠️ **Erro no Ollama ({resp.status_code}):** {resp.text}"
-            data = resp.json()
-            return data.get("message", {}).get("content", "").strip()
+        resp = await client.post(url, json=payload, timeout=90.0)
+        if resp.status_code != 200:
+            return f"⚠️ **Erro no Ollama ({resp.status_code}):** {resp.text}"
+        data = resp.json()
+        return data.get("message", {}).get("content", "").strip()
     except Exception as exc:
         log.error(f"[Ollama] Erro de conexão: {exc}")
         return (

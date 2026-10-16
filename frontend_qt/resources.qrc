@@ -1,9 +1,11 @@
 <RCC>
     <qresource prefix="/">
         <file alias="app_icon.png">resources/app_icon.png</file>
+        <file alias="logo.png">resources/logo_transparent.png</file>
+        <file alias="LOGO.png">resources/logo_transparent.png</file>
+        <file alias="logo_transparent.png">resources/logo_transparent.png</file>
     </qresource>
     <qresource prefix="/themes">
         <file alias="dark.qss">resources/themes/dark.qss</file>
-        <file alias="light.qss">resources/themes/light.qss</file>
     </qresource>
 </RCC>
